@@ -3,7 +3,6 @@ package com.example.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,9 +23,14 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockReset
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -42,18 +46,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import com.example.ui.components.studyMateTextFieldColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -70,15 +70,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.auth.OtpResetUiState
+import com.example.data.auth.OtpStep
+import com.example.data.auth.SecurityUtils
+import com.example.ui.components.studyMateTextFieldColors
 import com.example.ui.theme.AcademicBlue
 import com.example.ui.theme.DangerRed
-import com.example.ui.theme.Slate100
-import com.example.ui.theme.Slate200
-import com.example.ui.theme.Slate50
-import com.example.ui.theme.Slate700
-import com.example.ui.theme.Slate800
-import com.example.ui.theme.Slate900
 import com.example.ui.theme.SuccessGreen
+import com.example.ui.theme.WarningOrange
+import kotlinx.coroutines.delay
 
 @Composable
 fun AuthScreen(
@@ -88,7 +88,16 @@ fun AuthScreen(
     onForgotPassword: (email: String, onResult: (isSuccess: Boolean, message: String) -> Unit) -> Unit = { _, _ -> },
     authError: String?,
     isLoading: Boolean,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    showOtpResetDialog: Boolean = false,
+    otpResetState: OtpResetUiState = OtpResetUiState(),
+    onOpenForgotPassword: (email: String) -> Unit = {},
+    onDismissForgotPassword: () -> Unit = {},
+    onRequestOtp: (email: String) -> Unit = {},
+    onVerifyOtp: (otp: String) -> Unit = {},
+    onResendOtp: () -> Unit = {},
+    onResetPassword: (newPass: String, confirmPass: String) -> Unit = { _, _ -> },
+    onCompleteReset: () -> String = { "" }
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Login, 1 = Sign Up
 
@@ -103,13 +112,6 @@ fun AuthScreen(
     var signupPassword by remember { mutableStateOf("") }
     var signupConfirmPassword by remember { mutableStateOf("") }
     var signupPasswordVisible by remember { mutableStateOf(false) }
-
-    // Forgot Password Dialog
-    var showForgotPasswordDialog by remember { mutableStateOf(false) }
-    var forgotPasswordEmail by remember { mutableStateOf("") }
-    var forgotPasswordSuccess by remember { mutableStateOf<String?>(null) }
-    var forgotPasswordError by remember { mutableStateOf<String?>(null) }
-    var isSendingReset by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val scrollState = rememberScrollState()
@@ -235,7 +237,7 @@ fun AuthScreen(
                 Surface(
                     color = DangerRed.copy(alpha = 0.1f),
                     shape = RoundedCornerShape(10.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.3f)),
+                    border = BorderStroke(1.dp, DangerRed.copy(alpha = 0.3f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp)
@@ -260,12 +262,13 @@ fun AuthScreen(
                         loginEmail = it
                         onClearError()
                     },
-                    label = { Text("Email Address") },
-                    placeholder = { Text("student@university.edu") },
+                    label = { Text("Email") },
+                    placeholder = { Text("student@example.com") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Email, contentDescription = null)
                     },
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                     colors = studyMateTextFieldColors(),
                     shape = RoundedCornerShape(12.dp),
@@ -297,6 +300,7 @@ fun AuthScreen(
                     },
                     visualTransformation = if (loginPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = {
                         focusManager.clearFocus()
@@ -315,11 +319,7 @@ fun AuthScreen(
                 ) {
                     TextButton(
                         onClick = {
-                            forgotPasswordEmail = loginEmail.trim()
-                            forgotPasswordSuccess = null
-                            forgotPasswordError = null
-                            isSendingReset = false
-                            showForgotPasswordDialog = true
+                            onOpenForgotPassword(loginEmail.trim())
                         },
                         modifier = Modifier.testTag("forgot_password_button")
                     ) {
@@ -449,11 +449,12 @@ fun AuthScreen(
                         onClearError()
                     },
                     label = { Text("Full Name") },
-                    placeholder = { Text("e.g. Subhankar Sharma") },
+                    placeholder = { Text("Subhankar Sharma") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Person, contentDescription = null)
                     },
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
                     colors = studyMateTextFieldColors(),
                     shape = RoundedCornerShape(12.dp),
@@ -470,12 +471,13 @@ fun AuthScreen(
                         signupEmail = it
                         onClearError()
                     },
-                    label = { Text("Email Address") },
-                    placeholder = { Text("student@university.edu") },
+                    label = { Text("Email") },
+                    placeholder = { Text("student@example.com") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Email, contentDescription = null)
                     },
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                     colors = studyMateTextFieldColors(),
                     shape = RoundedCornerShape(12.dp),
@@ -492,8 +494,8 @@ fun AuthScreen(
                         signupPassword = it
                         onClearError()
                     },
-                    label = { Text("Password (min 6 characters)") },
-                    placeholder = { Text("Create a password") },
+                    label = { Text("Password (min 8 chars)") },
+                    placeholder = { Text("Enter your password") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Lock, contentDescription = null)
                     },
@@ -507,6 +509,7 @@ fun AuthScreen(
                     },
                     visualTransformation = if (signupPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
                     colors = studyMateTextFieldColors(),
                     shape = RoundedCornerShape(12.dp),
@@ -524,12 +527,13 @@ fun AuthScreen(
                         onClearError()
                     },
                     label = { Text("Confirm Password") },
-                    placeholder = { Text("Re-enter password") },
+                    placeholder = { Text("Re-enter your password") },
                     leadingIcon = {
                         Icon(imageVector = Icons.Default.Lock, contentDescription = null)
                     },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = {
                         focusManager.clearFocus()
@@ -650,97 +654,488 @@ fun AuthScreen(
         }
     }
 
-    // Forgot Password Dialog
-    if (showForgotPasswordDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                if (!isSendingReset) showForgotPasswordDialog = false
-            },
-            title = {
-                Text(text = "Reset Password via Email", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            },
-            text = {
-                Column {
+    // ========================================================
+    // SECURE REAL EMAIL OTP PASSWORD RESET MULTI-STEP DIALOG
+    // ========================================================
+    if (showOtpResetDialog) {
+        OtpPasswordResetDialog(
+            state = otpResetState,
+            onDismiss = onDismissForgotPassword,
+            onRequestOtp = onRequestOtp,
+            onVerifyOtp = onVerifyOtp,
+            onResendOtp = onResendOtp,
+            onResetPassword = onResetPassword,
+            onComplete = {
+                val email = onCompleteReset()
+                if (email.isNotBlank()) {
+                    loginEmail = email
+                }
+                selectedTab = 0
+            }
+        )
+    }
+}
+
+/**
+ * Multi-Step Material 3 Dialog implementing the 4 required screens:
+ * 1. Forgot Password? (Enter email -> Send OTP)
+ * 2. Verify Your Email (Enter 6-digit OTP -> countdown & resend cooldown)
+ * 3. Create New Password (8+ chars, uppercase, lowercase, number, matching confirmation)
+ * 4. Password Reset Successful (Confirmation -> Back to Login)
+ */
+@Composable
+fun OtpPasswordResetDialog(
+    state: OtpResetUiState,
+    onDismiss: () -> Unit,
+    onRequestOtp: (email: String) -> Unit,
+    onVerifyOtp: (otp: String) -> Unit,
+    onResendOtp: () -> Unit,
+    onResetPassword: (newPass: String, confirmPass: String) -> Unit,
+    onComplete: () -> Unit
+) {
+    var emailInput by remember(state.email) { mutableStateOf(state.email) }
+    var otpInput by remember { mutableStateOf("") }
+    var newPasswordInput by remember { mutableStateOf("") }
+    var confirmPasswordInput by remember { mutableStateOf("") }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+
+    // Live countdown clock for expiry and resend cooldown
+    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(state.step) {
+        while (true) {
+            currentTimeMillis = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
+    val expiryRemainingSeconds = remember(currentTimeMillis, state.expiresAtMillis) {
+        if (state.expiresAtMillis > currentTimeMillis) {
+            ((state.expiresAtMillis - currentTimeMillis) / 1000).toInt()
+        } else 0
+    }
+
+    val cooldownRemainingSeconds = remember(currentTimeMillis, state.cooldownUntilMillis) {
+        if (state.cooldownUntilMillis > currentTimeMillis) {
+            ((state.cooldownUntilMillis - currentTimeMillis) / 1000).toInt()
+        } else 0
+    }
+
+    val expiryMinutes = expiryRemainingSeconds / 60
+    val expirySeconds = expiryRemainingSeconds % 60
+    val formattedExpiry = String.format("%02d:%02d", expiryMinutes, expirySeconds)
+
+    AlertDialog(
+        onDismissRequest = {
+            if (!state.isLoading) onDismiss()
+        },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(AcademicBlue.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = when (state.step) {
+                            OtpStep.EMAIL -> Icons.Default.LockReset
+                            OtpStep.VERIFY_OTP -> Icons.Default.Email
+                            OtpStep.NEW_PASSWORD -> Icons.Default.Lock
+                            OtpStep.SUCCESS -> Icons.Default.CheckCircle
+                        },
+                        contentDescription = null,
+                        tint = if (state.step == OtpStep.SUCCESS) SuccessGreen else AcademicBlue,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = when (state.step) {
+                        OtpStep.EMAIL -> "Forgot Password?"
+                        OtpStep.VERIFY_OTP -> "Verify Your Email"
+                        OtpStep.NEW_PASSWORD -> "Create New Password"
+                        OtpStep.SUCCESS -> "Password Reset Successful"
+                    },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // ==========================================
+                // SCREEN 1: FORGOT PASSWORD (EMAIL ENTRY)
+                // ==========================================
+                if (state.step == OtpStep.EMAIL) {
                     Text(
-                        text = "Enter your registered email address. Firebase will send an official password reset link directly to your inbox.",
-                        fontSize = 13.sp,
+                        text = "Enter your registered email address and we will send you a 6-digit verification code.",
+                        fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
                     OutlinedTextField(
-                        value = forgotPasswordEmail,
-                        onValueChange = {
-                            forgotPasswordEmail = it
-                            forgotPasswordError = null
-                            forgotPasswordSuccess = null
+                        value = emailInput,
+                        onValueChange = { emailInput = it },
+                        label = { Text("Email") },
+                        placeholder = { Text("student@example.com") },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Email, contentDescription = null)
                         },
-                        label = { Text("Email Address") },
                         singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
                         colors = studyMateTextFieldColors(),
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("otp_email_input")
                     )
-                    if (forgotPasswordError != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = forgotPasswordError ?: "",
-                            fontSize = 13.sp,
-                            color = DangerRed,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    if (forgotPasswordSuccess != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = forgotPasswordSuccess ?: "",
-                            fontSize = 13.sp,
-                            color = SuccessGreen,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val email = forgotPasswordEmail.trim()
-                        if (email.isEmpty()) {
-                            forgotPasswordError = "Please enter your registered email address."
-                            forgotPasswordSuccess = null
+
+                // ==========================================
+                // SCREEN 2: VERIFY YOUR EMAIL (OTP ENTRY)
+                // ==========================================
+                if (state.step == OtpStep.VERIFY_OTP) {
+                    Text(
+                        text = "We sent a 6-digit verification code to your registered email address.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = state.email,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = AcademicBlue
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = otpInput,
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) otpInput = it },
+                        label = { Text("Verification Code") },
+                        placeholder = { Text("123456") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 4.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                        colors = studyMateTextFieldColors(),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("otp_code_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Expiry Countdown
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (expiryRemainingSeconds > 0) {
+                                "Code expires in $formattedExpiry"
+                            } else {
+                                "Code expired. Please request a new code."
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (expiryRemainingSeconds > 0) MaterialTheme.colorScheme.onSurfaceVariant else DangerRed
+                        )
+
+                        if (state.attemptsRemaining < 5) {
+                            Text(
+                                text = "${state.attemptsRemaining} attempts left",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = WarningOrange
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Resend Cooldown
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (cooldownRemainingSeconds > 0) {
+                            Text(
+                                text = "You can request another code in $cooldownRemainingSeconds seconds.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         } else {
-                            isSendingReset = true
-                            forgotPasswordError = null
-                            forgotPasswordSuccess = null
-                            onForgotPassword(email) { success, message ->
-                                isSendingReset = false
-                                if (success) {
-                                    forgotPasswordSuccess = message
-                                    forgotPasswordError = null
-                                } else {
-                                    forgotPasswordError = message
-                                    forgotPasswordSuccess = null
-                                }
+                            TextButton(
+                                onClick = onResendOtp,
+                                enabled = !state.isLoading,
+                                modifier = Modifier.testTag("otp_resend_button")
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Resend OTP",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
-                    },
-                    enabled = !isSendingReset,
-                    colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue)
-                ) {
-                    if (isSendingReset) {
-                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                    } else {
-                        Text("Send Reset Link")
                     }
                 }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showForgotPasswordDialog = false },
-                    enabled = !isSendingReset
-                ) {
-                    Text("Close")
+
+                // ==========================================
+                // SCREEN 3: CREATE NEW PASSWORD
+                // ==========================================
+                if (state.step == OtpStep.NEW_PASSWORD) {
+                    Text(
+                        text = "Create a secure new password for your StudyMate account.",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = newPasswordInput,
+                        onValueChange = { newPasswordInput = it },
+                        label = { Text("New Password") },
+                        placeholder = { Text("Enter your new password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (newPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null
+                                )
+                            }
+                        },
+                        visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                        colors = studyMateTextFieldColors(),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("otp_new_password_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = confirmPasswordInput,
+                        onValueChange = { confirmPasswordInput = it },
+                        label = { Text("Confirm Password") },
+                        placeholder = { Text("Re-enter your new password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        trailingIcon = {
+                            IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = null
+                                )
+                            }
+                        },
+                        visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                        colors = studyMateTextFieldColors(),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("otp_confirm_password_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Real-time Password Requirements Checklist
+                    PasswordRequirementItem(label = "Minimum 8 characters", isMet = SecurityUtils.hasMinPasswordLength(newPasswordInput))
+                    PasswordRequirementItem(label = "At least 1 uppercase letter (A-Z)", isMet = SecurityUtils.hasUppercase(newPasswordInput))
+                    PasswordRequirementItem(label = "At least 1 lowercase letter (a-z)", isMet = SecurityUtils.hasLowercase(newPasswordInput))
+                    PasswordRequirementItem(label = "At least 1 number (0-9)", isMet = SecurityUtils.hasDigit(newPasswordInput))
+                    PasswordRequirementItem(
+                        label = "Matching confirmation",
+                        isMet = confirmPasswordInput.isNotEmpty() && newPasswordInput == confirmPasswordInput
+                    )
+                }
+
+                // ==========================================
+                // SCREEN 4: PASSWORD RESET SUCCESSFUL
+                // ==========================================
+                if (state.step == OtpStep.SUCCESS) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "Your StudyMate password has been updated successfully.",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "You can now log in with your new password.",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
+                // Error Banner
+                if (!state.error.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        color = DangerRed.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = state.error,
+                            fontSize = 12.sp,
+                            color = DangerRed,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+
+                // Neutral / Success Info Banner
+                if (!state.successMessage.isNullOrBlank() && state.step != OtpStep.SUCCESS) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        color = SuccessGreen.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = state.successMessage,
+                            fontSize = 12.sp,
+                            color = SuccessGreen,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
                 }
             }
+        },
+        confirmButton = {
+            when (state.step) {
+                OtpStep.EMAIL -> {
+                    Button(
+                        onClick = { onRequestOtp(emailInput.trim()) },
+                        enabled = !state.isLoading && emailInput.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("otp_send_button")
+                    ) {
+                        if (state.isLoading) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Sending OTP...")
+                            }
+                        } else {
+                            Text("Send OTP")
+                        }
+                    }
+                }
+                OtpStep.VERIFY_OTP -> {
+                    Button(
+                        onClick = { onVerifyOtp(otpInput.trim()) },
+                        enabled = !state.isLoading && otpInput.length == 6,
+                        colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("otp_verify_button")
+                    ) {
+                        if (state.isLoading) {
+                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        } else {
+                            Text("Verify OTP")
+                        }
+                    }
+                }
+                OtpStep.NEW_PASSWORD -> {
+                    Button(
+                        onClick = { onResetPassword(newPasswordInput, confirmPasswordInput) },
+                        enabled = !state.isLoading,
+                        colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("otp_reset_password_button")
+                    ) {
+                        if (state.isLoading) {
+                            CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        } else {
+                            Text("Reset Password")
+                        }
+                    }
+                }
+                OtpStep.SUCCESS -> {
+                    Button(
+                        onClick = onComplete,
+                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.testTag("otp_back_to_login_button")
+                    ) {
+                        Text("Back to Login", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        },
+        dismissButton = {
+            if (state.step != OtpStep.SUCCESS) {
+                TextButton(
+                    onClick = onDismiss,
+                    enabled = !state.isLoading
+                ) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+private fun PasswordRequirementItem(label: String, isMet: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 2.dp)
+    ) {
+        Icon(
+            imageVector = if (isMet) Icons.Default.Check else Icons.Default.Close,
+            contentDescription = null,
+            tint = if (isMet) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            color = if (isMet) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = if (isMet) FontWeight.SemiBold else FontWeight.Normal
         )
     }
 }

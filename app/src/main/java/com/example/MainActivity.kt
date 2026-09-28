@@ -118,6 +118,9 @@ class MainActivity : ComponentActivity() {
                         SplashScreen()
                     }
                     AppScreenState.AUTH -> {
+                        val otpResetState by viewModel.otpResetState.collectAsStateWithLifecycle()
+                        val showOtpDialog by viewModel.showOtpResetDialog.collectAsStateWithLifecycle()
+
                         AuthScreen(
                             onLogin = { email, pass -> viewModel.login(email, pass) },
                             onRegister = { name, email, pass, confirm -> viewModel.register(name, email, pass, confirm) },
@@ -125,7 +128,16 @@ class MainActivity : ComponentActivity() {
                             onForgotPassword = { email, callback -> viewModel.sendPasswordResetEmail(email, callback) },
                             authError = authError,
                             isLoading = isAuthLoading,
-                            onClearError = { viewModel.clearAuthError() }
+                            onClearError = { viewModel.clearAuthError() },
+                            showOtpResetDialog = showOtpDialog,
+                            otpResetState = otpResetState,
+                            onOpenForgotPassword = { email -> viewModel.openForgotPasswordOtpFlow(email) },
+                            onDismissForgotPassword = { viewModel.dismissForgotPasswordOtpFlow() },
+                            onRequestOtp = { email -> viewModel.requestPasswordResetOtp(email) },
+                            onVerifyOtp = { otp -> viewModel.verifyPasswordResetOtp(otp) },
+                            onResendOtp = { viewModel.resendPasswordResetOtp() },
+                            onResetPassword = { newPass, confirmPass -> viewModel.resetPasswordWithNewCredentials(newPass, confirmPass) },
+                            onCompleteReset = { viewModel.finishPasswordResetToLogin() }
                         )
                     }
                     AppScreenState.ONBOARDING -> {

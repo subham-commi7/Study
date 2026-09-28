@@ -27,11 +27,17 @@ import kotlinx.coroutines.flow.combine
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
+import com.example.data.auth.IOtpPasswordResetService
+import com.example.data.auth.OtpPasswordResetManager
+import com.example.data.auth.OtpRequestResult
+import com.example.data.auth.OtpResetResult
+import com.example.data.auth.OtpVerifyResult
 import java.util.Locale
 
 class StudyMateRepository(
     private val db: AppDatabase,
-    private val authManager: FirebaseAuthManager = FirebaseAuthManager()
+    private val authManager: FirebaseAuthManager = FirebaseAuthManager(),
+    private val otpService: IOtpPasswordResetService = OtpPasswordResetManager()
 ) {
 
     // Subjects
@@ -426,6 +432,18 @@ class StudyMateRepository(
         } catch (_: Exception) {
             ""
         }
+    }
+
+    suspend fun requestPasswordResetOtp(email: String): Result<OtpRequestResult> {
+        return otpService.requestOtp(email)
+    }
+
+    suspend fun verifyPasswordResetOtp(email: String, otp: String): Result<OtpVerifyResult> {
+        return otpService.verifyOtp(email, otp)
+    }
+
+    suspend fun resetPasswordWithToken(email: String, resetToken: String, newPassword: String): Result<OtpResetResult> {
+        return otpService.resetPassword(email, resetToken, newPassword)
     }
 
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {

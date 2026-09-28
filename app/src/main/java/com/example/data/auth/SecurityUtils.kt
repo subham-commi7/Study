@@ -32,10 +32,29 @@ object SecurityUtils {
     }
 
     fun validatePasswordStrength(password: String): String? {
-        if (password.length < 6) {
-            return "Password must be at least 6 characters long."
+        if (password.length < 8) {
+            return "Password must be at least 8 characters long."
+        }
+        if (!password.any { it.isUpperCase() }) {
+            return "Password must contain at least 1 uppercase letter."
+        }
+        if (!password.any { it.isLowerCase() }) {
+            return "Password must contain at least 1 lowercase letter."
+        }
+        if (!password.any { it.isDigit() }) {
+            return "Password must contain at least 1 number."
         }
         return null
+    }
+
+    fun hasMinPasswordLength(password: String): Boolean = password.length >= 8
+    fun hasUppercase(password: String): Boolean = password.any { it.isUpperCase() }
+    fun hasLowercase(password: String): Boolean = password.any { it.isLowerCase() }
+    fun hasDigit(password: String): Boolean = password.any { it.isDigit() }
+
+    fun isValidOtp(otp: String): Boolean {
+        val trimmed = otp.trim()
+        return trimmed.length == 6 && trimmed.all { it.isDigit() }
     }
 
     /**

@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // SECURITY MANDATE: Password reset OTP records are strictly accessible by
+    // Cloud Functions / Firebase Admin SDK only. Normal authenticated and unauthenticated
+    // clients are completely blocked from reading or writing OTP hashes.
+    match /password_reset_otps/{document} {
+      allow read, write: if false;
+    }
+
+    // Default catch-all rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
