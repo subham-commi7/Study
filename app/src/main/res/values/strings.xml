@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">StudyMate</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_routine">Routine</string>
+    <string name="nav_attendance">Attendance</string>
+    <string name="nav_syllabus">Syllabus</string>
+    <string name="nav_documents">Documents</string>
+    <string name="nav_ai">AI</string>
+</resources>

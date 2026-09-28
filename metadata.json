@@ -1,0 +1,6 @@
+{
+  "name": "StudyMate",
+  "description": "Clean, simple, reliable academic companion for school and college students.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
