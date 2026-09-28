@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -716,30 +717,6 @@ object UniversalDocumentEngine {
         }
 
         return emptyList()
-    }
-                        unit = unit,
-                        chapter = chap,
-                        topic = t.removePrefix("•").removePrefix("-").trim(),
-                        sourceInfo = sourceFileName,
-                        confidence = "MEDIUM"
-                    )
-                )
-            }
-        }
-
-        if (list.isEmpty()) {
-            list.add(
-                ExtractedSyllabusTopic(
-                    subject = "Course Subject",
-                    unit = "Unit 1: Overview",
-                    chapter = "Chapter 1: Foundations",
-                    topic = "Core Concepts and Syllabus Coverage",
-                    sourceInfo = sourceFileName,
-                    confidence = "MEDIUM"
-                )
-            )
-        }
-        return list
     }
 
     /**

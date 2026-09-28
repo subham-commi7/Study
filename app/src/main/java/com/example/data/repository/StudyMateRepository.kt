@@ -221,9 +221,12 @@ class StudyMateRepository(
                     existing.copy(
                         unitName = topic.unitName.ifBlank { existing.unitName },
                         chapterName = topic.chapterName.ifBlank { existing.chapterName },
-                        subtopicName = topic.subtopicName.ifBlank { existing.subtopicName },
-                        weightageMarks = topic.weightageMarks.ifBlank { existing.weightageMarks },
-                        classification = topic.classification
+                        subtopic = topic.subtopic.ifBlank { existing.subtopic },
+                        subjectCode = topic.subjectCode.ifBlank { existing.subjectCode },
+                        course = topic.course.ifBlank { existing.course },
+                        semester = topic.semester.ifBlank { existing.semester },
+                        isTrackable = topic.isTrackable,
+                        isReferenceOnly = topic.isReferenceOnly
                     )
                 )
             } else {
