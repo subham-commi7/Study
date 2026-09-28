@@ -58,6 +58,60 @@ object SecurityUtils {
     }
 
     /**
+     * Computes real fallback initials from the user's first and last name.
+     * e.g., "Subhankar Sarkar" -> "SS", "Subhankar" -> "SU", "John Michael Doe" -> "JD"
+     * Never returns random or hardcoded initials.
+     */
+    fun computeInitials(fullName: String?, email: String? = null): String {
+        val clean = fullName?.trim() ?: ""
+        if (clean.isNotBlank()) {
+            val parts = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }
+            if (parts.size >= 2) {
+                val first = parts.first().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val last = parts.last().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val combined = "$first$last"
+                if (combined.isNotBlank()) return combined
+            }
+            // Check camelCase e.g. "SubhankarSarkar" -> "SS"
+            val upperChars = clean.filter { it.isUpperCase() }
+            if (upperChars.length >= 2) {
+                return "${upperChars.first()}${upperChars.last()}"
+            }
+            // Check delimiters e.g. "subhankar.sarkar" or "subhankar_sarkar"
+            val delims = clean.split('.', '_', '-', '/').filter { it.isNotBlank() }
+            if (delims.size >= 2) {
+                val first = delims.first().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val last = delims.last().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val combined = "$first$last"
+                if (combined.isNotBlank()) return combined
+            }
+            if (clean.length >= 2) {
+                return clean.take(2).uppercase()
+            }
+            if (clean.isNotEmpty()) {
+                return clean.first().uppercase()
+            }
+        }
+
+        // Fallback to email username if available
+        if (!email.isNullOrBlank()) {
+            val prefix = email.substringBefore("@").trim()
+            val emailParts = prefix.split('.', '_', '-').filter { it.isNotBlank() }
+            if (emailParts.size >= 2) {
+                val first = emailParts.first().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val last = emailParts.last().firstOrNull()?.uppercaseChar()?.toString() ?: ""
+                val combined = "$first$last"
+                if (combined.isNotBlank()) return combined
+            }
+            if (prefix.length >= 2) {
+                return prefix.take(2).uppercase()
+            }
+        }
+
+        return "SM"
+    }
+
+    /**
      * Generates a candidate 8-digit numeric student ID (10000000 to 99999999).
      */
     fun generateCandidateStudentId(): String {

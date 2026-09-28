@@ -165,6 +165,7 @@ data class UserEntity(
     val year: String = "",
     val groupSection: String = "",
     val reminderMinutesBefore: Int = 10,
+    val photoUrl: String = "",
     val createdAt: Long = System.currentTimeMillis()
 )
 

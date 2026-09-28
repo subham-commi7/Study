@@ -56,7 +56,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.local.entities.ClassScheduleEntity
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.example.data.auth.SecurityUtils
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.studyMateTextFieldColors
 import com.example.ui.theme.AcademicAmber
@@ -148,13 +150,22 @@ fun HomeScreen(
                         .testTag("home_profile_avatar_button"),
                     contentAlignment = Alignment.Center
                 ) {
-                    val initials = (currentUser?.fullName?.take(2) ?: "SM").uppercase()
-                    Text(
-                        text = initials,
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    if (!currentUser?.photoUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = currentUser?.photoUrl,
+                            contentDescription = "Profile Photo",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        val initials = SecurityUtils.computeInitials(currentUser?.fullName)
+                        Text(
+                            text = initials,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))

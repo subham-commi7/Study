@@ -55,6 +55,9 @@ interface RoutineDao {
     @Query("SELECT * FROM class_schedules WHERE id = :id LIMIT 1")
     suspend fun getScheduleById(id: Long): ClassScheduleEntity?
 
+    @Query("SELECT * FROM class_schedules WHERE dayOfWeek = :day AND startTime = :startTime AND LOWER(subjectName) = LOWER(:subjectName) LIMIT 1")
+    suspend fun findExistingSchedule(day: Int, startTime: String, subjectName: String): ClassScheduleEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSchedule(schedule: ClassScheduleEntity): Long
 
@@ -135,6 +138,9 @@ interface SyllabusDao {
 
     @Query("SELECT * FROM syllabus_topics WHERE subjectName = :subjectName ORDER BY unitName ASC, chapterName ASC, topicName ASC")
     fun getTopicsForSubjectName(subjectName: String): Flow<List<SyllabusTopicEntity>>
+
+    @Query("SELECT * FROM syllabus_topics WHERE subjectId = :subjectId AND LOWER(topicName) = LOWER(:topicName) LIMIT 1")
+    suspend fun findExistingTopic(subjectId: Long, topicName: String): SyllabusTopicEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTopic(topic: SyllabusTopicEntity): Long

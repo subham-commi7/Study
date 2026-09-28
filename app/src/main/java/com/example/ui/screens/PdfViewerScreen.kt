@@ -109,9 +109,24 @@ fun PdfViewerScreen(
         errorMessage = null
         withContext(Dispatchers.IO) {
             try {
-                val file = File(document.filePath)
+                var file = File(document.filePath)
                 if (!file.exists()) {
-                    errorMessage = "PDF file not found on local storage.\n${document.filePath}"
+                    // Fallback 1: check filesDir/academic_docs/ with document.fileName
+                    val fallback1 = File(File(context.filesDir, "academic_docs"), document.fileName)
+                    if (fallback1.exists()) {
+                        file = fallback1
+                    } else {
+                        // Fallback 2: look for any file ending with document.fileName in academic_docs
+                        val docsDir = File(context.filesDir, "academic_docs")
+                        val matching = docsDir.listFiles { _, name -> name.endsWith(document.fileName) }?.firstOrNull()
+                        if (matching != null && matching.exists()) {
+                            file = matching
+                        }
+                    }
+                }
+
+                if (!file.exists() || file.length() == 0L) {
+                    errorMessage = "This PDF document is not available on device storage. Please re-upload the file."
                     isLoading = false
                     return@withContext
                 }

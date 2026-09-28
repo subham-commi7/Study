@@ -141,9 +141,10 @@ class FirebaseAuthManager(
             return Result.failure(
                 IllegalStateException(
                     "Google Sign-In Web Client ID is not configured.\n" +
-                    "REQUIRES FIREBASE CONSOLE SHA-1/SHA-256 VERIFICATION:\n" +
-                    "SHA-1: 20:6F:A8:FE:02:1B:70:63:52:A2:07:C4:CF:71:50:D0:A1:A9:15:2F\n" +
-                    "Please register this SHA-1 in Firebase Console Project Settings and download the updated google-services.json."
+                    "To enable Google Sign-In, add your OAuth Web Client ID in strings.xml (default_web_client_id) or google-services.json.\n" +
+                    "Firebase Console Fingerprints to register for project studymate-c9f21:\n" +
+                    "SHA-1: DC:46:28:96:09:2A:F0:F0:E9:0E:60:8D:16:76:AB:18:D8:BB:B7:04\n" +
+                    "SHA-256: FF:BD:54:B4:2B:F5:9D:26:A2:54:1B:7A:9F:59:89:8D:9C:06:2B:A9:53:6D:7B:AF:19:B7:25:F8:77:57:C5:18"
                 )
             )
         }

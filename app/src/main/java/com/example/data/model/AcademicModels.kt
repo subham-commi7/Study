@@ -232,6 +232,8 @@ data class UniversalDocumentResult(
     val notesData: ExtractedNotesData? = null,
     val rawText: String = "",
     val requiresUserTypeConfirmation: Boolean = false,
+    val persistentFilePath: String? = null,
+    val sourceUriString: String? = null,
     val detectedDuplicate: DocumentEntity? = null,
     val detectedConflicts: List<ScheduleConflict> = emptyList(),
     val crossDocumentRelations: List<String> = emptyList()

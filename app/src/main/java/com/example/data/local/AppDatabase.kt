@@ -53,7 +53,7 @@ import com.example.data.local.entities.UserEntity
         AIActionEntity::class,
         RoutineVersionEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -77,6 +77,12 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN photoUrl TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context.applicationContext).also { INSTANCE = it }
@@ -89,6 +95,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 "studymate_database.db"
             )
+                .addMigrations(MIGRATION_5_6)
                 .fallbackToDestructiveMigration(dropAllTables = false)
                 .build()
         }

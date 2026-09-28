@@ -75,7 +75,21 @@ class StudyMateRepository(
     }
 
     suspend fun insertSchedules(schedules: List<ClassScheduleEntity>) {
-        db.routineDao().insertSchedules(schedules)
+        for (sch in schedules) {
+            val existing = db.routineDao().findExistingSchedule(sch.dayOfWeek, sch.startTime, sch.subjectName)
+            if (existing != null) {
+                db.routineDao().updateSchedule(
+                    existing.copy(
+                        endTime = sch.endTime,
+                        room = sch.room.ifBlank { existing.room },
+                        teacher = sch.teacher.ifBlank { existing.teacher },
+                        reminderEnabled = sch.reminderEnabled
+                    )
+                )
+            } else {
+                db.routineDao().insertSchedule(sch)
+            }
+        }
     }
 
     suspend fun updateSchedule(schedule: ClassScheduleEntity) {
@@ -200,7 +214,22 @@ class StudyMateRepository(
     }
 
     suspend fun insertTopics(topics: List<SyllabusTopicEntity>) {
-        db.syllabusDao().insertTopics(topics)
+        for (topic in topics) {
+            val existing = db.syllabusDao().findExistingTopic(topic.subjectId, topic.topicName)
+            if (existing != null) {
+                db.syllabusDao().updateTopic(
+                    existing.copy(
+                        unitName = topic.unitName.ifBlank { existing.unitName },
+                        chapterName = topic.chapterName.ifBlank { existing.chapterName },
+                        subtopicName = topic.subtopicName.ifBlank { existing.subtopicName },
+                        weightageMarks = topic.weightageMarks.ifBlank { existing.weightageMarks },
+                        classification = topic.classification
+                    )
+                )
+            } else {
+                db.syllabusDao().insertTopic(topic)
+            }
+        }
     }
 
     suspend fun updateTopic(topic: SyllabusTopicEntity) {
@@ -406,6 +435,7 @@ class StudyMateRepository(
         }
         val fbUser = firebaseResult.getOrThrow()
         val email = fbUser.email?.lowercase() ?: ""
+        val photoUrl = fbUser.photoUrl?.toString() ?: ""
         var localUser = if (email.isNotBlank()) db.userDao().getUserByEmail(email) else null
         if (localUser == null) {
             val studentId = generateUniqueStudentId()
@@ -415,10 +445,27 @@ class StudyMateRepository(
                 fullName = displayName,
                 email = email,
                 passwordHash = "",
-                salt = ""
+                salt = "",
+                photoUrl = photoUrl
             )
             val id = db.userDao().insertUser(newUser)
             localUser = newUser.copy(id = id)
+        } else {
+            // Update photo or display name if available from Google
+            var updated = false
+            var userToUpdate = localUser
+            if (photoUrl.isNotBlank() && localUser.photoUrl != photoUrl) {
+                userToUpdate = userToUpdate.copy(photoUrl = photoUrl)
+                updated = true
+            }
+            if (fbUser.displayName != null && fbUser.displayName!!.isNotBlank() && localUser.fullName.isBlank()) {
+                userToUpdate = userToUpdate.copy(fullName = fbUser.displayName!!)
+                updated = true
+            }
+            if (updated) {
+                db.userDao().updateUser(userToUpdate)
+                localUser = userToUpdate
+            }
         }
         val setupDone = localUser.college.isNotBlank() || localUser.course.isNotBlank()
         setSession(localUser.id, isAuthenticated = true, setupDone = setupDone)
@@ -428,7 +475,11 @@ class StudyMateRepository(
     private fun getGoogleWebClientId(context: Context): String {
         return try {
             val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-            if (resId != 0) context.getString(resId) else ""
+            if (resId != 0) {
+                val str = context.getString(resId).trim()
+                if (str.isNotBlank()) return str
+            }
+            ""
         } catch (_: Exception) {
             ""
         }

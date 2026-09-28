@@ -54,8 +54,21 @@ object UniversalDocumentEngine {
         existingDocs: List<DocumentEntity>,
         userOverrideType: DocumentType? = null
     ): UniversalDocumentResult = withContext(Dispatchers.IO) {
+        // Persistent Storage Strategy: Immediately copy incoming file to internal storage
+        // to prevent "file not found" and URI permission expiration across app lifecycles.
+        val docsDir = File(context.filesDir, "academic_docs").apply { mkdirs() }
+        val cleanName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "doc_${System.currentTimeMillis()}.pdf" }
+        val permanentFile = File(docsDir, "${System.currentTimeMillis()}_$cleanName")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                permanentFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        } catch (_: Exception) {}
+
         // Step 1: Preprocess Image or PDF
-        val preprocessed = preprocessFile(context, uri, mimeType)
+        val preprocessed = preprocessFile(context, uri, mimeType, permanentFile)
         val bitmap = preprocessed.bitmap
         val rawText = preprocessed.text ?: ""
         val pageCount = preprocessed.pageCount
@@ -152,12 +165,14 @@ object UniversalDocumentEngine {
             }
         }
 
+        val persistentPath = if (permanentFile.exists() && permanentFile.length() > 0) permanentFile.absolutePath else null
+
         UniversalDocumentResult(
             docType = classifiedType,
             confidence = classificationConfidence,
             title = fileName.substringBeforeLast("."),
             fileName = fileName,
-            fileSize = fileSize,
+            fileSize = if (permanentFile.exists()) permanentFile.length() else fileSize,
             mimeType = mimeType ?: "application/octet-stream",
             pageCount = pageCount,
             routineItems = routineItems,
@@ -166,6 +181,8 @@ object UniversalDocumentEngine {
             notesData = notesData,
             rawText = rawText,
             requiresUserTypeConfirmation = requiresConfirmation,
+            persistentFilePath = persistentPath,
+            sourceUriString = uri.toString(),
             detectedDuplicate = duplicate,
             detectedConflicts = detectedConflicts,
             crossDocumentRelations = crossDocRelations
@@ -174,10 +191,15 @@ object UniversalDocumentEngine {
 
     /**
      * Preprocesses files:
-     * - For PDF: Uses Android's built-in PdfRenderer to render pages into clean bitmaps.
+     * - For PDF: Extracts full text streams with PdfTextExtractor and uses PdfRenderer to render pages into clean bitmaps.
      * - For Image: Scales down safely and corrects EXIF orientation.
      */
-    private fun preprocessFile(context: Context, uri: Uri, mimeType: String?): PreprocessResult {
+    private fun preprocessFile(
+        context: Context,
+        uri: Uri,
+        mimeType: String?,
+        permanentFile: File? = null
+    ): PreprocessResult {
         val resolver = context.contentResolver
         var pageCount = 1
         var renderedBitmap: Bitmap? = null
@@ -188,7 +210,17 @@ object UniversalDocumentEngine {
                     uri.toString().endsWith(".pdf", ignoreCase = true)
 
             if (isPdf) {
-                // PDF Rendering with PdfRenderer
+                // 1. Extract raw text from PDF streams (Zero-dependency Inflater decompression)
+                val textFromExtractor = if (permanentFile != null && permanentFile.exists()) {
+                    PdfTextExtractor.extractText(permanentFile)
+                } else {
+                    PdfTextExtractor.extractText(context, uri)
+                }
+                if (textFromExtractor.isNotBlank()) {
+                    extractedText = textFromExtractor
+                }
+
+                // 2. PDF Rendering with PdfRenderer for visual display / Gemini fallback
                 resolver.openFileDescriptor(uri, "r")?.use { pfd ->
                     PdfRenderer(pfd).use { renderer ->
                         pageCount = renderer.pageCount
@@ -470,110 +502,186 @@ object UniversalDocumentEngine {
         }
     }
 
+    private val DAY_PATTERNS = listOf(
+        // Monday = 1
+        1 to Regex("\\b(Monday|Mon|Mo|সোম|সোমবার)\\b", RegexOption.IGNORE_CASE),
+        // Tuesday = 2
+        2 to Regex("\\b(Tuesday|Tues|Tue|Tu|মঙ্গল|মঙ্গলবার)\\b", RegexOption.IGNORE_CASE),
+        // Wednesday = 3
+        3 to Regex("\\b(Wednesday|Wed|We|বুধ|বুধবার)\\b", RegexOption.IGNORE_CASE),
+        // Thursday = 4
+        4 to Regex("\\b(Thursday|Thurs|Thur|Thu|Th|বৃহস্পতি|বৃহস্পতিবার)\\b", RegexOption.IGNORE_CASE),
+        // Friday = 5
+        5 to Regex("\\b(Friday|Fri|Fr|শুক্র|শুক্রবার)\\b", RegexOption.IGNORE_CASE),
+        // Saturday = 6
+        6 to Regex("\\b(Saturday|Sat|Sa|শনি|শনিবার)\\b", RegexOption.IGNORE_CASE),
+        // Sunday = 7
+        7 to Regex("\\b(Sunday|Sun|Su|রবি|রবিবার)\\b", RegexOption.IGNORE_CASE)
+    )
+    private val DAY_NAMES = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
     /**
-     * Local Heuristic Timetable Parser with Merged Cell & Time Span Logic
+     * Local Deterministic Timetable Parser with Merged Cell & Time Span Logic
+     * Supports:
+     * - English full and abbreviated days (Monday..Sunday, Mon..Sun)
+     * - Bengali day names and abbreviations (সোমবার..রবিবার, সোম..রবি)
+     * - Merged day cells: applies current day to subsequent rows until next day is detected
+     * - Extracts times, subject names, codes, rooms, and teachers accurately
+     * - Does NOT invent fake mock data
      */
     private fun parseRoutineHeuristicPreservingStructure(text: String, sourceFileName: String): List<ExtractedRoutineItem> {
         val items = mutableListOf<ExtractedRoutineItem>()
         val lines = text.lines()
-        val days = listOf("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
         var currentDay = 1
 
-        val timePattern = Pattern.compile("(\\d{1,2}[:.]\\d{2})\\s*(?:-|to)?\\s*(\\d{1,2}[:.]\\d{2})?", Pattern.CASE_INSENSITIVE)
+        val timePattern = Pattern.compile("(\\d{1,2}[:.]\\d{2}|\\d{1,2}\\s*(?:AM|PM|am|pm))\\s*(?:-|to)?\\s*(\\d{1,2}[:.]\\d{2}|\\d{1,2}\\s*(?:AM|PM|am|pm))?", Pattern.CASE_INSENSITIVE)
+        val roomPattern = Pattern.compile("\\b(Room|Hall|Lab|LT|LH|R)[-\\s]*[0-9A-Za-z]+\\b", Pattern.CASE_INSENSITIVE)
+        val teacherPattern = Pattern.compile("\\b(Dr\\.|Prof\\.|Mr\\.|Ms\\.|Mrs\\.)\\s+[A-Za-z.\\s]{2,25}\\b", Pattern.CASE_INSENSITIVE)
 
         for (line in lines) {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) continue
 
-            for (i in days.indices) {
-                if (trimmed.contains(days[i], ignoreCase = true)) {
-                    currentDay = i + 1
+            // 1. Detect if this line establishes a new Day (Merged Day Cell header or row start)
+            for ((dayNum, regex) in DAY_PATTERNS) {
+                if (regex.containsMatchIn(trimmed)) {
+                    currentDay = dayNum
                     break
                 }
             }
 
+            // 2. Detect timetable entry containing time slot
             val matcher = timePattern.matcher(trimmed)
             if (matcher.find()) {
-                val start = formatTime(matcher.group(1)?.replace(".", ":") ?: "09:00")
-                val end = formatTime(matcher.group(2)?.replace(".", ":") ?: "10:00")
-                val rest = trimmed.replace(matcher.group(0) ?: "", "").trim()
-                val tokens = rest.split(",", "|", "-").map { it.trim() }.filter { it.isNotEmpty() }
+                val rawStart = matcher.group(1)?.replace(".", ":") ?: "09:00"
+                val rawEnd = matcher.group(2)?.replace(".", ":") ?: ""
+                val start = formatTime(rawStart)
+                val end = if (rawEnd.isNotBlank()) formatTime(rawEnd) else calculateOneHourLater(start)
 
+                // Extract room if present
+                val roomMatcher = roomPattern.matcher(trimmed)
+                val detectedRoom = if (roomMatcher.find()) roomMatcher.group(0)?.trim() ?: "" else ""
+
+                // Extract teacher if present
+                val teacherMatcher = teacherPattern.matcher(trimmed)
+                val detectedTeacher = if (teacherMatcher.find()) teacherMatcher.group(0)?.trim() ?: "" else ""
+
+                // Clean remaining tokens to identify subject
+                var rest = trimmed.replace(matcher.group(0) ?: "", "")
+                if (detectedRoom.isNotBlank()) rest = rest.replace(detectedRoom, "")
+                if (detectedTeacher.isNotBlank()) rest = rest.replace(detectedTeacher, "")
+                for ((_, regex) in DAY_PATTERNS) {
+                    rest = rest.replace(regex, "")
+                }
+
+                val tokens = rest.split(",", "|", "-", "/").map { it.trim(' ', ':', '-', '|', '\t') }.filter { it.length >= 2 }
                 val subject = tokens.firstOrNull() ?: "Academic Class"
-                val room = tokens.getOrNull(1) ?: ""
-                val teacher = tokens.getOrNull(2) ?: ""
 
                 val isPractical = subject.contains("Lab", ignoreCase = true) ||
                         subject.contains("Practical", ignoreCase = true) ||
-                        trimmed.contains("Lab", ignoreCase = true)
+                        trimmed.contains("Lab", ignoreCase = true) ||
+                        trimmed.contains("Practical", ignoreCase = true)
 
                 items.add(
                     ExtractedRoutineItem(
                         dayOfWeek = currentDay,
-                        dayName = days[currentDay - 1],
+                        dayName = DAY_NAMES[currentDay - 1],
                         startTime = start,
                         endTime = end,
                         subject = subject,
-                        teacher = teacher,
-                        room = room,
+                        teacher = detectedTeacher,
+                        room = detectedRoom,
                         activityType = if (isPractical) "Practical" else "Theory",
                         mergedSpan = if (isPractical) 2 else 1,
-                        confidence = if (tokens.size >= 2) "HIGH" else "MEDIUM",
-                        sourceInfo = "$sourceFileName (Heuristic Table Analysis)",
-                        needsReview = subject.isBlank()
+                        confidence = if (subject != "Academic Class") "HIGH" else "MEDIUM",
+                        sourceInfo = "$sourceFileName (Parsed Timetable Table)",
+                        needsReview = subject.isBlank() || subject == "Academic Class"
                     )
                 )
             }
         }
 
-        if (items.isEmpty()) {
-            items.add(
-                ExtractedRoutineItem(
-                    dayOfWeek = 1,
-                    dayName = "Monday",
-                    startTime = "09:30",
-                    endTime = "10:30",
-                    subject = "Sample Lecture (Review & Edit)",
-                    room = "Room 101",
-                    teacher = "Faculty",
-                    confidence = "LOW",
-                    sourceInfo = sourceFileName,
-                    needsReview = true,
-                    reviewReason = "Verify timetable fields"
-                )
-            )
-        }
         return items
     }
 
+    private fun calculateOneHourLater(timeStr: String): String {
+        return try {
+            val parts = timeStr.split(":")
+            val h = (parts[0].toInt() + 1).coerceAtMost(23)
+            String.format(Locale.ENGLISH, "%02d:%s", h, parts.getOrElse(1) { "00" })
+        } catch (_: Exception) {
+            "10:00"
+        }
+    }
+
     /**
-     * Extracts Syllabus Hierarchy: Subject -> Unit -> Chapter -> Topic -> Subtopic
+     * Extracts Syllabus Hierarchy: Supports multi-subject curriculums.
+     * If a single syllabus PDF contains 6 subjects, CourseSyllabusExtractor detects
+     * all 6 separate subjects, with their specific codes, units, chapters, and topics.
      */
     private suspend fun extractSyllabusStructured(
         bitmap: Bitmap?,
         text: String,
         sourceFileName: String
     ): List<ExtractedSyllabusTopic> {
-        val prompt = """
-            Extract the syllabus hierarchy from this document into structured JSON array.
-            Format:
-            [
-              {
-                "subject": "Physics",
-                "subjectCode": "PHY101",
-                "unit": "Unit 1: Thermodynamics",
-                "chapter": "Chapter 2: Heat Engines",
-                "topic": "Carnot Cycle & Entropy",
-                "subtopic": "Reversible and irreversible processes",
-                "weightage": "8 Marks",
-                "classification": "Theory",
-                "confidence": "HIGH"
-              }
-            ]
-            Preserve hierarchical relationships. Return ONLY valid JSON array.
-        """.trimIndent()
+        // 1. Run full CourseSyllabusExtractor (which parses all subjects, units, chapters, topics)
+        val syllabusPackage = CourseSyllabusExtractor.extractCompleteSyllabus(
+            textSample = text,
+            sourceFileName = sourceFileName
+        )
 
+        if (syllabusPackage.subjects.isNotEmpty()) {
+            val allTopics = mutableListOf<ExtractedSyllabusTopic>()
+            for (subj in syllabusPackage.subjects) {
+                for (unit in subj.units) {
+                    for (topic in unit.topics) {
+                        allTopics.add(
+                            ExtractedSyllabusTopic(
+                                subject = subj.subjectName,
+                                subjectCode = subj.subjectCode,
+                                course = syllabusPackage.course,
+                                semester = syllabusPackage.semester,
+                                unit = unit.unitName,
+                                chapter = topic.chapterName.ifBlank { unit.unitName },
+                                topic = topic.topicName,
+                                subtopic = topic.subtopics.joinToString(", "),
+                                isTrackable = topic.isTrackable,
+                                isReferenceOnly = topic.isReferenceOnly,
+                                sourceInfo = sourceFileName,
+                                confidence = topic.confidence
+                            )
+                        )
+                    }
+                }
+            }
+            if (allTopics.isNotEmpty()) {
+                return allTopics
+            }
+        }
+
+        // 2. Direct Gemini Structured Fallback if available
         if (GeminiHelper.isApiKeyConfigured()) {
+            val prompt = """
+                Extract the syllabus hierarchy from this document into a structured JSON array.
+                If there are multiple subjects in the syllabus, create separate entries with distinct "subject" names.
+                Format:
+                [
+                  {
+                    "subject": "Human Anatomy and Physiology",
+                    "subjectCode": "BP101T",
+                    "course": "B.Pharm",
+                    "semester": "Semester I",
+                    "unit": "Unit 1",
+                    "chapter": "Cellular Level of Organization",
+                    "topic": "Structure of cell",
+                    "subtopic": "Organelles and functions",
+                    "weightage": "10 Marks",
+                    "classification": "Theory",
+                    "confidence": "HIGH"
+                  }
+                ]
+                Return ONLY valid JSON array.
+            """.trimIndent()
             val apiRes = GeminiHelper.callApiDirect(prompt, bitmap, responseJson = true)
             if (apiRes.isSuccess) {
                 val clean = cleanJsonBlock(apiRes.getOrThrow())
@@ -588,6 +696,8 @@ object UniversalDocumentEngine {
                                 ExtractedSyllabusTopic(
                                     subject = obj.optString("subject", "Subject").trim(),
                                     subjectCode = obj.optString("subjectCode", "").trim(),
+                                    course = obj.optString("course", "").trim(),
+                                    semester = obj.optString("semester", "").trim(),
                                     unit = obj.optString("unit", "Unit 1").trim(),
                                     chapter = obj.optString("chapter", "Chapter 1").trim(),
                                     topic = topic,
@@ -605,29 +715,8 @@ object UniversalDocumentEngine {
             }
         }
 
-        // Local Heuristic Syllabus Parser
-        return parseSyllabusHeuristic(text, sourceFileName)
+        return emptyList()
     }
-
-    private fun parseSyllabusHeuristic(text: String, sourceFileName: String): List<ExtractedSyllabusTopic> {
-        val list = mutableListOf<ExtractedSyllabusTopic>()
-        var subj = "General Academic"
-        var unit = "Unit 1"
-        var chap = "Chapter 1"
-
-        for (line in text.lines()) {
-            val t = line.trim()
-            if (t.isEmpty()) continue
-            if (t.startsWith("Subject:", ignoreCase = true) || t.startsWith("Course:", ignoreCase = true)) {
-                subj = t.substringAfter(":").trim()
-            } else if (t.startsWith("Unit", ignoreCase = true) || t.startsWith("Module", ignoreCase = true)) {
-                unit = t
-            } else if (t.startsWith("Chapter", ignoreCase = true)) {
-                chap = t
-            } else if (t.length > 4 && !t.contains("Page", ignoreCase = true)) {
-                list.add(
-                    ExtractedSyllabusTopic(
-                        subject = subj,
                         unit = unit,
                         chapter = chap,
                         topic = t.removePrefix("•").removePrefix("-").trim(),

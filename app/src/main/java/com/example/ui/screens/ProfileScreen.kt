@@ -82,6 +82,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.example.data.auth.SecurityUtils
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -257,13 +260,22 @@ fun ProfileScreen(
                                 .background(AcademicBlue),
                             contentAlignment = Alignment.Center
                         ) {
-                            val initials = (user?.fullName?.take(2) ?: "SM").uppercase()
-                            Text(
-                                text = initials,
-                                color = Color.White,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            if (!user?.photoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = user?.photoUrl,
+                                    contentDescription = "Profile Photo",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop
+                                )
+                            } else {
+                                val initials = SecurityUtils.computeInitials(user?.fullName)
+                                Text(
+                                    text = initials,
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.width(14.dp))
