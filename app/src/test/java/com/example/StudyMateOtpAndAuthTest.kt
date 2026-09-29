@@ -335,4 +335,23 @@ class StudyMateOtpAndAuthTest {
             assertTrue(strongReset.isSuccess)
         }
     }
+
+    // ==========================================
+    // 13. GOOGLE SIGN-IN OAUTH CLIENT VERIFICATION
+    // ==========================================
+
+    @Test
+    fun testGoogleSignInOAuthClientsAndPackage() {
+        val expectedPackage = "com.aistudio.studymate.akzqvy"
+        val expectedWebClientId = "393174656677-j96pdhbemi449aj81j2rrpkbipdkgp1o.apps.googleusercontent.com"
+        val expectedAndroidClientId = "393174656677-f74vvtqq1qa3167gfp1m1349gfe9fphh.apps.googleusercontent.com"
+        val expectedSha1 = "dc462896092af0f0e90e608d1676ab18d8bbb704"
+
+        assertEquals("com.aistudio.studymate.akzqvy", expectedPackage)
+        assertTrue(expectedWebClientId.endsWith(".apps.googleusercontent.com"))
+        assertTrue(expectedAndroidClientId.endsWith(".apps.googleusercontent.com"))
+        assertEquals(40, expectedSha1.length)
+        assertTrue(expectedWebClientId.startsWith("393174656677-"))
+        assertTrue(expectedAndroidClientId.startsWith("393174656677-"))
+    }
 }

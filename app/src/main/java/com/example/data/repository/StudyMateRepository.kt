@@ -477,6 +477,8 @@ class StudyMateRepository(
 
     private fun getGoogleWebClientId(context: Context): String {
         return try {
+            val fromR = context.getString(com.example.R.string.default_web_client_id).trim()
+            if (fromR.isNotBlank()) return fromR
             val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
             if (resId != 0) {
                 val str = context.getString(resId).trim()
