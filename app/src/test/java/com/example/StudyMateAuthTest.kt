@@ -184,17 +184,17 @@ class StudyMateAuthTest {
         assertEquals("SS", SecurityUtils.computeInitials("Subhankar Sarkar", null))
         assertEquals("JD", SecurityUtils.computeInitials("John Doe", null))
 
-        // Single word
-        assertEquals("S", SecurityUtils.computeInitials("Subhankar", null))
+        // Single word (takes first 2 letters)
+        assertEquals("SU", SecurityUtils.computeInitials("Subhankar", null))
 
         // Three words
         assertEquals("AS", SecurityUtils.computeInitials("Amit Kumar Sarkar", null))
 
-        // Null name with email fallback
-        assertEquals("S", SecurityUtils.computeInitials(null, "student@college.edu"))
+        // Null name with email fallback (takes first 2 letters of email prefix)
+        assertEquals("ST", SecurityUtils.computeInitials(null, "student@college.edu"))
 
         // Blank name with email fallback
-        assertEquals("S", SecurityUtils.computeInitials("   ", "subhankar@gmail.com"))
+        assertEquals("SU", SecurityUtils.computeInitials("   ", "subhankar@gmail.com"))
 
         // Both null
         assertEquals("SM", SecurityUtils.computeInitials(null, null))
