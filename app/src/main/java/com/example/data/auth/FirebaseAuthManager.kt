@@ -10,7 +10,9 @@ import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.auth.ActionCodeResult
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthActionCodeException
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.FirebaseAuthUserCollisionException
@@ -21,6 +23,17 @@ import com.google.firebase.auth.userProfileChangeRequest
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.CancellationException
 
+/**
+ * Native Firebase Authentication Manager:
+ * Uses Firebase Authentication free Spark tier features exclusively:
+ * - Native Email/Password registration
+ * - Native Email Verification links (sendEmailVerification)
+ * - Native Password Reset email links (sendPasswordResetEmail)
+ * - Native Action Code verification & confirmation (confirmPasswordReset, applyActionCode)
+ * - Google Sign-In with Credential Manager API
+ *
+ * NO Cloud Functions, NO custom SMTP, NO Secret Manager required.
+ */
 class FirebaseAuthManager(
     private val customAuth: FirebaseAuth? = null
 ) {
@@ -38,6 +51,17 @@ class FirebaseAuthManager(
             null
         }
 
+    val isEmailVerified: Boolean
+        get() = try {
+            auth?.currentUser?.isEmailVerified == true
+        } catch (_: Throwable) {
+            false
+        }
+
+    /**
+     * Creates an account with Email + Password, updates user profile,
+     * and sends Firebase's native verification email link.
+     */
     suspend fun createUserWithEmailAndPassword(
         email: String,
         password: String,
@@ -68,9 +92,17 @@ class FirebaseAuthManager(
                     // Non-fatal if profile display name update fails
                 }
             }
+
+            // Send Firebase native email verification link
+            try {
+                user.sendEmailVerification().await()
+            } catch (e: Exception) {
+                // Non-fatal for account creation, but logged
+            }
+
             Result.success(user)
         } catch (e: FirebaseAuthWeakPasswordException) {
-            Result.failure(IllegalArgumentException("Password is too weak: ${e.reason ?: "Must be at least 6 characters."}"))
+            Result.failure(IllegalArgumentException("Password is too weak: ${e.reason ?: "Must be at least 8 characters."}"))
         } catch (e: FirebaseAuthUserCollisionException) {
             Result.failure(IllegalStateException("An account with email $trimmedEmail already exists. Please log in."))
         } catch (e: FirebaseAuthInvalidCredentialsException) {
@@ -82,6 +114,9 @@ class FirebaseAuthManager(
         }
     }
 
+    /**
+     * Signs in with Email and Password using standard Firebase Authentication.
+     */
     suspend fun signInWithEmailAndPassword(
         email: String,
         password: String
@@ -111,17 +146,9 @@ class FirebaseAuthManager(
         }
     }
 
-    suspend fun signInWithCustomToken(customToken: String): Result<FirebaseUser> {
-        val activeAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
-        return try {
-            val authResult = activeAuth.signInWithCustomToken(customToken).await()
-            val user = authResult.user ?: return Result.failure(IllegalStateException("Sign in failed with token."))
-            Result.success(user)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
+    /**
+     * Sends Firebase native password-reset email containing a secure reset link.
+     */
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
         val trimmedEmail = email.trim()
         if (!SecurityUtils.isValidEmail(trimmedEmail)) {
@@ -142,6 +169,113 @@ class FirebaseAuthManager(
         }
     }
 
+    /**
+     * Sends Firebase native verification email to current user.
+     */
+    suspend fun sendEmailVerification(): Result<Unit> {
+        val user = currentUser ?: return Result.failure(IllegalStateException("No authenticated user."))
+        return try {
+            user.sendEmailVerification().await()
+            Result.success(Unit)
+        } catch (e: FirebaseNetworkException) {
+            Result.failure(IllegalStateException("Network error. Please check your internet connection."))
+        } catch (e: Exception) {
+            Result.failure(Exception(e.localizedMessage ?: "Failed to send verification email."))
+        }
+    }
+
+    /**
+     * Refreshes Firebase user profile to update emailVerified state.
+     */
+    suspend fun reloadUser(): Result<FirebaseUser> {
+        val user = currentUser ?: return Result.failure(IllegalStateException("No authenticated user."))
+        return try {
+            user.reload().await()
+            Result.success(user)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Verifies Firebase action code for password reset and returns associated email.
+     */
+    suspend fun verifyPasswordResetCode(actionCode: String): Result<String> {
+        val activeAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
+        val cleanCode = actionCode.trim()
+        if (cleanCode.isBlank()) {
+            return Result.failure(IllegalArgumentException("Password reset link or code is missing."))
+        }
+        return try {
+            val email = activeAuth.verifyPasswordResetCode(cleanCode).await()
+            Result.success(email)
+        } catch (e: FirebaseAuthActionCodeException) {
+            Result.failure(IllegalArgumentException("The password reset link is invalid, expired, or has already been used."))
+        } catch (e: FirebaseAuthInvalidCredentialsException) {
+            Result.failure(IllegalArgumentException("The password reset link is invalid, expired, or has already been used."))
+        } catch (e: FirebaseNetworkException) {
+            Result.failure(IllegalStateException("Network error. Please check your internet connection."))
+        } catch (e: Exception) {
+            Result.failure(Exception(e.localizedMessage ?: "Invalid or expired password reset link."))
+        }
+    }
+
+    /**
+     * Completes password reset using Firebase native action code.
+     */
+    suspend fun confirmPasswordReset(actionCode: String, newPassword: String): Result<Unit> {
+        val activeAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
+        val cleanCode = actionCode.trim()
+        if (cleanCode.isBlank()) {
+            return Result.failure(IllegalArgumentException("Password reset code or link is missing."))
+        }
+
+        val pwdValidation = SecurityUtils.validatePasswordStrength(newPassword)
+        if (pwdValidation != null) {
+            return Result.failure(IllegalArgumentException(pwdValidation))
+        }
+
+        return try {
+            activeAuth.confirmPasswordReset(cleanCode, newPassword).await()
+            Result.success(Unit)
+        } catch (e: FirebaseAuthActionCodeException) {
+            Result.failure(IllegalArgumentException("The password reset link has expired or has already been used. Please request a new link."))
+        } catch (e: FirebaseAuthInvalidCredentialsException) {
+            Result.failure(IllegalArgumentException("The password reset link is invalid or expired. Please request a new link."))
+        } catch (e: FirebaseAuthWeakPasswordException) {
+            Result.failure(IllegalArgumentException("Password is too weak: ${e.reason ?: "Must be at least 8 characters."}"))
+        } catch (e: FirebaseNetworkException) {
+            Result.failure(IllegalStateException("Network error. Please check your internet connection."))
+        } catch (e: Exception) {
+            Result.failure(Exception(e.localizedMessage ?: "Failed to reset password."))
+        }
+    }
+
+    /**
+     * Applies Firebase action code (e.g. for email verification).
+     */
+    suspend fun applyActionCode(actionCode: String): Result<Unit> {
+        val activeAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
+        val cleanCode = actionCode.trim()
+        if (cleanCode.isBlank()) {
+            return Result.failure(IllegalArgumentException("Action code is missing."))
+        }
+        return try {
+            activeAuth.applyActionCode(cleanCode).await()
+            activeAuth.currentUser?.reload()?.await()
+            Result.success(Unit)
+        } catch (e: FirebaseAuthActionCodeException) {
+            Result.failure(IllegalArgumentException("The link is expired or has already been used."))
+        } catch (e: FirebaseAuthInvalidCredentialsException) {
+            Result.failure(IllegalArgumentException("The link is invalid or expired."))
+        } catch (e: Exception) {
+            Result.failure(Exception(e.localizedMessage ?: "Failed to verify email link."))
+        }
+    }
+
+    /**
+     * Google Sign-In via Credential Manager.
+     */
     suspend fun signInWithGoogle(
         context: Context,
         serverClientId: String

@@ -9,9 +9,7 @@ import android.provider.OpenableColumns
 import com.example.data.ai.GeminiHelper
 import com.example.data.ai.UniversalDocumentEngine
 import com.example.data.local.AppDatabase
-import com.example.data.auth.OtpResetUiState
-import com.example.data.auth.OtpSignupUiState
-import com.example.data.auth.OtpStep
+import com.example.data.auth.ForgotPasswordUiState
 import com.example.data.auth.SecurityUtils
 import com.example.data.local.entities.AcademicTaskEntity
 import com.example.data.local.entities.AIActionEntity
@@ -100,19 +98,12 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isAuthLoading = MutableStateFlow(false)
     val isAuthLoading: StateFlow<Boolean> = _isAuthLoading.asStateFlow()
 
-    // Real OTP Password Reset State
-    private val _otpResetState = MutableStateFlow(OtpResetUiState())
-    val otpResetState: StateFlow<OtpResetUiState> = _otpResetState.asStateFlow()
+    // Native Firebase Password Reset State
+    private val _forgotPasswordState = MutableStateFlow(ForgotPasswordUiState())
+    val forgotPasswordState: StateFlow<ForgotPasswordUiState> = _forgotPasswordState.asStateFlow()
 
-    private val _showOtpResetDialog = MutableStateFlow(false)
-    val showOtpResetDialog: StateFlow<Boolean> = _showOtpResetDialog.asStateFlow()
-
-    // Real OTP Account Creation State
-    private val _otpSignupState = MutableStateFlow(OtpSignupUiState())
-    val otpSignupState: StateFlow<OtpSignupUiState> = _otpSignupState.asStateFlow()
-
-    private val _showOtpSignupDialog = MutableStateFlow(false)
-    val showOtpSignupDialog: StateFlow<Boolean> = _showOtpSignupDialog.asStateFlow()
+    private val _showForgotPasswordDialog = MutableStateFlow(false)
+    val showForgotPasswordDialog: StateFlow<Boolean> = _showForgotPasswordDialog.asStateFlow()
 
     private val _reminderMinutes = MutableStateFlow(10)
     val reminderMinutes: StateFlow<Int> = _reminderMinutes.asStateFlow()
@@ -408,133 +399,17 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _isAuthLoading.value = true
             _authError.value = null
-            val result = repository.requestSignupOtp(trimmedEmail, trimmedName)
+            val result = repository.registerUser(trimmedName, trimmedEmail, pass)
             _isAuthLoading.value = false
 
             if (result.isSuccess) {
-                val res = result.getOrThrow()
-                val now = System.currentTimeMillis()
-                _otpSignupState.value = OtpSignupUiState(
-                    isOpen = true,
-                    email = trimmedEmail,
-                    fullName = trimmedName,
-                    password = pass,
-                    expiresAtMillis = now + (res.expiresInSeconds * 1000L),
-                    cooldownUntilMillis = now + (res.cooldownSeconds * 1000L),
-                    attemptsRemaining = 5,
-                    isLoading = false,
-                    error = null,
-                    successMessage = res.message
-                )
-                _showOtpSignupDialog.value = true
-            } else {
-                _authError.value = result.exceptionOrNull()?.message ?: "Failed to send verification code."
-            }
-        }
-    }
-
-    fun dismissSignupOtpFlow() {
-        _showOtpSignupDialog.value = false
-        _otpSignupState.value = OtpSignupUiState()
-    }
-
-    fun resendSignupOtp() {
-        val current = _otpSignupState.value
-        val now = System.currentTimeMillis()
-        if (current.cooldownUntilMillis > 0 && now < current.cooldownUntilMillis) {
-            val remaining = Math.ceil((current.cooldownUntilMillis - now) / 1000.0).toInt()
-            _otpSignupState.value = current.copy(
-                error = "Please wait $remaining seconds before requesting another code."
-            )
-            return
-        }
-
-        viewModelScope.launch {
-            _otpSignupState.value = current.copy(isLoading = true, error = null, successMessage = null)
-            val result = repository.requestSignupOtp(current.email, current.fullName)
-            if (result.isSuccess) {
-                val res = result.getOrThrow()
-                val updatedNow = System.currentTimeMillis()
-                _otpSignupState.value = current.copy(
-                    expiresAtMillis = updatedNow + (res.expiresInSeconds * 1000L),
-                    cooldownUntilMillis = updatedNow + (res.cooldownSeconds * 1000L),
-                    attemptsRemaining = 5,
-                    isLoading = false,
-                    error = null,
-                    successMessage = res.message
-                )
-            } else {
-                _otpSignupState.value = current.copy(
-                    isLoading = false,
-                    error = result.exceptionOrNull()?.message ?: "Failed to resend code."
-                )
-            }
-        }
-    }
-
-    fun verifyAndCreateAccount(otp: String) {
-        val cleanOtp = otp.trim()
-        if (!SecurityUtils.isValidOtp(cleanOtp)) {
-            _otpSignupState.value = _otpSignupState.value.copy(
-                error = "Verification code must be exactly 6 digits."
-            )
-            return
-        }
-
-        val current = _otpSignupState.value
-        val now = System.currentTimeMillis()
-        if (current.expiresAtMillis > 0 && now > current.expiresAtMillis) {
-            _otpSignupState.value = current.copy(
-                error = "Verification code has expired. Please request a new code."
-            )
-            return
-        }
-
-        if (current.attemptsRemaining <= 0) {
-            _otpSignupState.value = current.copy(
-                error = "Maximum verification attempts exceeded. Please request a new code."
-            )
-            return
-        }
-
-        viewModelScope.launch {
-            _otpSignupState.value = current.copy(isLoading = true, error = null, successMessage = null)
-            val verifyResult = repository.verifySignupOtp(current.email, cleanOtp)
-            if (verifyResult.isFailure) {
-                val rem = (current.attemptsRemaining - 1).coerceAtLeast(0)
-                val errMsg = if (rem <= 0) {
-                    "Maximum verification attempts exceeded. Please request a new code."
-                } else {
-                    verifyResult.exceptionOrNull()?.message ?: "Incorrect verification code. $rem attempts remaining."
-                }
-                _otpSignupState.value = current.copy(
-                    attemptsRemaining = rem,
-                    isLoading = false,
-                    error = errMsg
-                )
-                return@launch
-            }
-
-            val signupToken = verifyResult.getOrThrow().signupToken
-            val createResult = repository.createVerifiedEmailAccount(
-                email = current.email,
-                signupToken = signupToken,
-                password = current.password,
-                fullName = current.fullName
-            )
-
-            if (createResult.isSuccess) {
-                val user = createResult.getOrThrow()
+                val user = result.getOrThrow()
                 _currentUser.value = user
-                _showOtpSignupDialog.value = false
-                _otpSignupState.value = OtpSignupUiState()
+                _reminderMinutes.value = user.reminderMinutesBefore
                 _appScreenState.value = AppScreenState.ONBOARDING
-                showMessage("Account created and verified! Welcome, ${user.fullName}!")
+                showMessage("Account created! A verification link has been sent to your email. Welcome, ${user.fullName}!")
             } else {
-                _otpSignupState.value = current.copy(
-                    isLoading = false,
-                    error = createResult.exceptionOrNull()?.message ?: "Failed to create verified account."
-                )
+                _authError.value = result.exceptionOrNull()?.message ?: "Registration failed. Please try again."
             }
         }
     }
@@ -543,39 +418,33 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         _authError.value = null
     }
 
-    fun sendPasswordResetEmail(email: String, onResult: (isSuccess: Boolean, message: String) -> Unit) {
-        viewModelScope.launch {
-            val result = repository.sendPasswordResetEmail(email)
-            if (result.isSuccess) {
-                onResult(true, "Password reset instructions have been sent to ${email.trim()}. Please check your inbox and spam folders.")
-            } else {
-                val errorMsg = result.exceptionOrNull()?.message ?: "Failed to send reset email. Please try again."
-                onResult(false, errorMsg)
-            }
-        }
-    }
-
     // ==========================================
-    // REAL EMAIL OTP PASSWORD RESET WORKFLOW
+    // FIREBASE NATIVE FORGOT PASSWORD & RESET FLOW
     // ==========================================
 
-    fun openForgotPasswordOtpFlow(initialEmail: String = "") {
-        _otpResetState.value = OtpResetUiState(
-            step = OtpStep.EMAIL,
-            email = initialEmail.trim()
+    fun openForgotPasswordDialog(initialEmail: String = "") {
+        _forgotPasswordState.value = ForgotPasswordUiState(
+            isOpen = true,
+            email = initialEmail.trim(),
+            isSent = false,
+            isLoading = false,
+            error = null,
+            successMessage = null,
+            actionCode = null,
+            isResettingWithCode = false
         )
-        _showOtpResetDialog.value = true
+        _showForgotPasswordDialog.value = true
     }
 
-    fun dismissForgotPasswordOtpFlow() {
-        _showOtpResetDialog.value = false
-        _otpResetState.value = OtpResetUiState()
+    fun dismissForgotPasswordDialog() {
+        _showForgotPasswordDialog.value = false
+        _forgotPasswordState.value = ForgotPasswordUiState()
     }
 
-    fun requestPasswordResetOtp(email: String) {
+    fun sendPasswordResetLink(email: String) {
         val trimmedEmail = email.trim().lowercase()
         if (!SecurityUtils.isValidEmail(trimmedEmail)) {
-            _otpResetState.value = _otpResetState.value.copy(
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
                 error = "Please enter a valid email address.",
                 successMessage = null
             )
@@ -583,174 +452,125 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         viewModelScope.launch {
-            _otpResetState.value = _otpResetState.value.copy(
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
                 isLoading = true,
                 error = null,
                 successMessage = null
             )
-            val result = repository.requestPasswordResetOtp(trimmedEmail)
+            val result = repository.sendPasswordResetEmail(trimmedEmail)
             if (result.isSuccess) {
-                val res = result.getOrThrow()
-                val now = System.currentTimeMillis()
-                _otpResetState.value = _otpResetState.value.copy(
-                    step = OtpStep.VERIFY_OTP,
+                _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                    isSent = true,
+                    isLoading = false,
                     email = trimmedEmail,
-                    expiresAtMillis = now + (res.expiresInSeconds * 1000L),
-                    cooldownUntilMillis = now + (res.cooldownSeconds * 1000L),
-                    attemptsRemaining = 5,
-                    isLoading = false,
                     error = null,
-                    successMessage = res.message
+                    successMessage = "A secure password reset link has been sent to $trimmedEmail. Please open the link in your email to choose a new password."
                 )
             } else {
-                _otpResetState.value = _otpResetState.value.copy(
+                _forgotPasswordState.value = _forgotPasswordState.value.copy(
                     isLoading = false,
-                    error = result.exceptionOrNull()?.message ?: "Failed to send verification code."
+                    error = result.exceptionOrNull()?.message ?: "Failed to send reset email. Please try again."
                 )
             }
         }
     }
 
-    fun verifyPasswordResetOtp(otp: String) {
-        val cleanOtp = otp.trim()
-        if (!SecurityUtils.isValidOtp(cleanOtp)) {
-            _otpResetState.value = _otpResetState.value.copy(
-                error = "Verification code must be exactly 6 digits.",
-                successMessage = null
-            )
-            return
-        }
-
-        val current = _otpResetState.value
-        val now = System.currentTimeMillis()
-        if (current.expiresAtMillis > 0 && now > current.expiresAtMillis) {
-            _otpResetState.value = _otpResetState.value.copy(
-                error = "Verification code has expired. Please request a new code.",
-                successMessage = null
-            )
-            return
-        }
-
-        if (current.attemptsRemaining <= 0) {
-            _otpResetState.value = _otpResetState.value.copy(
-                error = "Maximum verification attempts exceeded. Please request a new code.",
-                successMessage = null
-            )
-            return
-        }
-
-        viewModelScope.launch {
-            _otpResetState.value = current.copy(isLoading = true, error = null, successMessage = null)
-            val result = repository.verifyPasswordResetOtp(current.email, cleanOtp)
-            if (result.isSuccess) {
-                val res = result.getOrThrow()
-                _otpResetState.value = current.copy(
-                    step = OtpStep.NEW_PASSWORD,
-                    resetToken = res.resetToken,
-                    isLoading = false,
-                    error = null,
-                    successMessage = res.message
-                )
-            } else {
-                val rem = (current.attemptsRemaining - 1).coerceAtLeast(0)
-                val errMsg = if (rem <= 0) {
-                    "Maximum verification attempts exceeded. Please request a new code."
-                } else {
-                    result.exceptionOrNull()?.message ?: "Incorrect verification code. $rem attempts remaining."
-                }
-                _otpResetState.value = current.copy(
-                    attemptsRemaining = rem,
-                    isLoading = false,
-                    error = errMsg
-                )
-            }
-        }
+    fun openResetPasswordWithCode(actionCode: String) {
+        _forgotPasswordState.value = ForgotPasswordUiState(
+            isOpen = true,
+            actionCode = actionCode.trim(),
+            isResettingWithCode = true,
+            isSent = false,
+            isLoading = false
+        )
+        _showForgotPasswordDialog.value = true
     }
 
-    fun resendPasswordResetOtp() {
-        val current = _otpResetState.value
-        val now = System.currentTimeMillis()
-        if (now < current.cooldownUntilMillis) {
-            val remSec = kotlin.math.ceil((current.cooldownUntilMillis - now) / 1000.0).toInt()
-            _otpResetState.value = current.copy(
-                error = "Please wait $remSec seconds before requesting another code."
+    fun confirmPasswordResetWithCode(actionCode: String, newPass: String, confirmPass: String) {
+        val cleanCode = actionCode.trim()
+        if (cleanCode.isBlank()) {
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                error = "Password reset code or link is missing."
             )
             return
         }
-
-        viewModelScope.launch {
-            _otpResetState.value = current.copy(isLoading = true, error = null, successMessage = null)
-            val result = repository.requestPasswordResetOtp(current.email)
-            if (result.isSuccess) {
-                val res = result.getOrThrow()
-                val newNow = System.currentTimeMillis()
-                _otpResetState.value = current.copy(
-                    expiresAtMillis = newNow + (res.expiresInSeconds * 1000L),
-                    cooldownUntilMillis = newNow + (res.cooldownSeconds * 1000L),
-                    attemptsRemaining = 5,
-                    isLoading = false,
-                    error = null,
-                    successMessage = "A new verification code has been sent."
-                )
-            } else {
-                _otpResetState.value = current.copy(
-                    isLoading = false,
-                    error = result.exceptionOrNull()?.message ?: "Failed to resend code."
-                )
-            }
-        }
-    }
-
-    fun resetPasswordWithNewCredentials(newPass: String, confirmPass: String) {
-        val current = _otpResetState.value
         if (newPass.isEmpty()) {
-            _otpResetState.value = current.copy(error = "Please enter your new password.")
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                error = "Please enter your new password."
+            )
             return
         }
         if (confirmPass.isEmpty()) {
-            _otpResetState.value = current.copy(error = "Please confirm your new password.")
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                error = "Please confirm your new password."
+            )
             return
         }
         if (newPass != confirmPass) {
-            _otpResetState.value = current.copy(error = "Passwords do not match.")
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                error = "Passwords do not match."
+            )
             return
         }
         val pwdError = SecurityUtils.validatePasswordStrength(newPass)
         if (pwdError != null) {
-            _otpResetState.value = current.copy(error = pwdError)
-            return
-        }
-        val token = current.resetToken
-        if (token.isNullOrBlank()) {
-            _otpResetState.value = current.copy(error = "Verification session expired. Please restart.")
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                error = pwdError
+            )
             return
         }
 
         viewModelScope.launch {
-            _otpResetState.value = current.copy(isLoading = true, error = null, successMessage = null)
-            val result = repository.resetPasswordWithToken(current.email, token, newPass)
+            _forgotPasswordState.value = _forgotPasswordState.value.copy(
+                isLoading = true,
+                error = null,
+                successMessage = null
+            )
+            val result = repository.confirmPasswordReset(cleanCode, newPass)
             if (result.isSuccess) {
-                val res = result.getOrThrow()
-                _otpResetState.value = current.copy(
-                    step = OtpStep.SUCCESS,
-                    isLoading = false,
-                    error = null,
-                    successMessage = res.message
-                )
+                _showForgotPasswordDialog.value = false
+                _forgotPasswordState.value = ForgotPasswordUiState()
+                showMessage("Password updated successfully! Please log in with your new password.")
             } else {
-                _otpResetState.value = current.copy(
+                _forgotPasswordState.value = _forgotPasswordState.value.copy(
                     isLoading = false,
-                    error = result.exceptionOrNull()?.message ?: "Failed to update password."
+                    error = result.exceptionOrNull()?.message ?: "Failed to reset password. The link may have expired or is invalid."
                 )
             }
         }
     }
 
-    fun finishPasswordResetToLogin(): String {
-        val email = _otpResetState.value.email
-        dismissForgotPasswordOtpFlow()
-        showMessage("Password reset successful. Please log in with your new password.")
-        return email
+    fun resendEmailVerification() {
+        viewModelScope.launch {
+            val result = repository.sendEmailVerification()
+            if (result.isSuccess) {
+                showMessage("Verification email sent! Please check your inbox.")
+            } else {
+                showMessage(result.exceptionOrNull()?.message ?: "Failed to send verification email.", isError = true)
+            }
+        }
+    }
+
+    fun handleAuthActionUri(uri: Uri) {
+        val mode = uri.getQueryParameter("mode")
+        val oobCode = uri.getQueryParameter("oobCode")
+        if (oobCode.isNullOrBlank()) return
+
+        when (mode) {
+            "resetPassword" -> {
+                openResetPasswordWithCode(oobCode)
+            }
+            "verifyEmail" -> {
+                viewModelScope.launch {
+                    val result = repository.applyActionCode(oobCode)
+                    if (result.isSuccess) {
+                        showMessage("Email verified successfully! You can now log in.")
+                    } else {
+                        showMessage(result.exceptionOrNull()?.message ?: "Email verification link expired or invalid.", isError = true)
+                    }
+                }
+            }
+        }
     }
 
     fun saveAcademicProfile(college: String, course: String, semester: String, year: String, group: String, fullName: String? = null) {

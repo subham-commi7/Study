@@ -27,21 +27,11 @@ import kotlinx.coroutines.flow.combine
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
-import com.example.data.auth.IOtpPasswordResetService
-import com.example.data.auth.IOtpSignupService
-import com.example.data.auth.OtpPasswordResetManager
-import com.example.data.auth.OtpRequestResult
-import com.example.data.auth.OtpResetResult
-import com.example.data.auth.OtpSignupAccountResult
-import com.example.data.auth.OtpSignupVerifyResult
-import com.example.data.auth.OtpVerifyResult
 import java.util.Locale
 
 class StudyMateRepository(
     private val db: AppDatabase,
-    private val authManager: FirebaseAuthManager = FirebaseAuthManager(),
-    private val otpService: IOtpPasswordResetService = OtpPasswordResetManager(),
-    private val otpSignupService: IOtpSignupService = OtpPasswordResetManager()
+    private val authManager: FirebaseAuthManager = FirebaseAuthManager()
 ) {
 
     // Subjects
@@ -479,8 +469,11 @@ class StudyMateRepository(
         return Result.success(localUser)
     }
 
-    private fun getGoogleWebClientId(context: Context): String {
+    fun getGoogleWebClientId(context: Context): String {
         return try {
+            val prefId = context.getSharedPreferences("studymate_prefs", Context.MODE_PRIVATE)
+                .getString("google_web_client_id", null)?.trim()
+            if (!prefId.isNullOrBlank()) return prefId
             val fromR = context.getString(com.example.R.string.default_web_client_id).trim()
             if (fromR.isNotBlank()) return fromR
             val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
@@ -494,67 +487,13 @@ class StudyMateRepository(
         }
     }
 
-    suspend fun requestPasswordResetOtp(email: String): Result<OtpRequestResult> {
-        return otpService.requestOtp(email)
-    }
-
-    suspend fun verifyPasswordResetOtp(email: String, otp: String): Result<OtpVerifyResult> {
-        return otpService.verifyOtp(email, otp)
-    }
-
-    suspend fun resetPasswordWithToken(email: String, resetToken: String, newPassword: String): Result<OtpResetResult> {
-        return otpService.resetPassword(email, resetToken, newPassword)
-    }
-
-    suspend fun requestSignupOtp(email: String, fullName: String): Result<OtpRequestResult> {
-        return otpSignupService.requestSignupOtp(email, fullName)
-    }
-
-    suspend fun verifySignupOtp(email: String, otp: String): Result<OtpSignupVerifyResult> {
-        return otpSignupService.verifySignupOtp(email, otp)
-    }
-
-    suspend fun createVerifiedEmailAccount(
-        email: String,
-        signupToken: String,
-        password: String,
-        fullName: String
-    ): Result<UserEntity> {
-        val trimmedEmail = email.trim().lowercase()
-        val trimmedName = fullName.trim()
-
-        val apiResult = otpSignupService.createVerifiedEmailAccount(trimmedEmail, signupToken, password, trimmedName)
-        if (apiResult.isFailure) {
-            return Result.failure(apiResult.exceptionOrNull() ?: Exception("Account creation failed."))
-        }
-        val accountRes = apiResult.getOrThrow()
-
-        // Authenticate locally in Firebase Auth using custom token if provided, or fallback to signInWithEmailAndPassword
-        if (!accountRes.customToken.isNullOrBlank()) {
-            val fbResult = authManager.signInWithCustomToken(accountRes.customToken)
-            if (fbResult.isFailure) {
-                authManager.signInWithEmailAndPassword(trimmedEmail, password)
-            }
-        } else {
-            authManager.signInWithEmailAndPassword(trimmedEmail, password)
-        }
-
-        var localUser = db.userDao().getUserByEmail(trimmedEmail)
-        if (localUser == null) {
-            val studentId = generateUniqueStudentId()
-            val newUser = UserEntity(
-                studentId = studentId,
-                fullName = trimmedName,
-                email = trimmedEmail,
-                passwordHash = "",
-                salt = ""
-            )
-            val id = db.userDao().insertUser(newUser)
-            localUser = newUser.copy(id = id)
-        }
-
-        setSession(localUser.id, isAuthenticated = true, setupDone = false)
-        return Result.success(localUser)
+    fun saveGoogleWebClientId(context: Context, clientId: String) {
+        try {
+            context.getSharedPreferences("studymate_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("google_web_client_id", clientId.trim())
+                .apply()
+        } catch (_: Exception) {}
     }
 
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
@@ -566,6 +505,31 @@ class StudyMateRepository(
             return Result.failure(IllegalArgumentException("Please enter a valid email address."))
         }
         return authManager.sendPasswordResetEmail(trimmedEmail)
+    }
+
+    suspend fun confirmPasswordReset(actionCode: String, newPassword: String): Result<Unit> {
+        return authManager.confirmPasswordReset(actionCode, newPassword)
+    }
+
+    suspend fun verifyPasswordResetCode(actionCode: String): Result<String> {
+        return authManager.verifyPasswordResetCode(actionCode)
+    }
+
+    suspend fun sendEmailVerification(): Result<Unit> {
+        return authManager.sendEmailVerification()
+    }
+
+    suspend fun reloadUserAndCheckVerified(): Result<Boolean> {
+        val reloadResult = authManager.reloadUser()
+        return if (reloadResult.isSuccess) {
+            Result.success(reloadResult.getOrThrow().isEmailVerified)
+        } else {
+            Result.failure(reloadResult.exceptionOrNull() ?: Exception("Failed to refresh user state."))
+        }
+    }
+
+    suspend fun applyActionCode(actionCode: String): Result<Unit> {
+        return authManager.applyActionCode(actionCode)
     }
 
     suspend fun getCurrentUser(): UserEntity? {
@@ -624,10 +588,12 @@ class StudyMateRepository(
         semester: String,
         year: String,
         groupSection: String,
-        reminderMinutes: Int? = null
+        reminderMinutes: Int? = null,
+        fullName: String? = null
     ): Result<UserEntity> {
         val user = getCurrentUser() ?: return Result.failure(IllegalStateException("No logged in user."))
         val updated = user.copy(
+            fullName = if (!fullName.isNullOrBlank()) fullName.trim() else user.fullName,
             college = college.trim(),
             course = course.trim(),
             semester = semester.trim(),

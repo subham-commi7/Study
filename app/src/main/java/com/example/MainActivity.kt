@@ -105,6 +105,9 @@ class MainActivity : ComponentActivity() {
                 FirebaseApp.initializeApp(this)
             }
         } catch (_: Exception) {}
+        intent?.data?.let { uri ->
+            viewModel.handleAuthActionUri(uri)
+        }
         enableEdgeToEdge()
         setContent {
             StudyMateTheme {
@@ -118,33 +121,24 @@ class MainActivity : ComponentActivity() {
                         SplashScreen()
                     }
                     AppScreenState.AUTH -> {
-                        val otpResetState by viewModel.otpResetState.collectAsStateWithLifecycle()
-                        val showOtpDialog by viewModel.showOtpResetDialog.collectAsStateWithLifecycle()
-                        val otpSignupState by viewModel.otpSignupState.collectAsStateWithLifecycle()
-                        val showSignupDialog by viewModel.showOtpSignupDialog.collectAsStateWithLifecycle()
+                        val forgotPasswordState by viewModel.forgotPasswordState.collectAsStateWithLifecycle()
+                        val showForgotPasswordDialog by viewModel.showForgotPasswordDialog.collectAsStateWithLifecycle()
 
                         AuthScreen(
                             onLogin = { email, pass -> viewModel.login(email, pass) },
                             onRegister = { name, email, pass, confirm -> viewModel.register(name, email, pass, confirm) },
                             onGoogleSignIn = { viewModel.loginWithGoogle(this@MainActivity) },
-                            onForgotPassword = { email, callback -> viewModel.sendPasswordResetEmail(email, callback) },
                             authError = authError,
                             isLoading = isAuthLoading,
                             onClearError = { viewModel.clearAuthError() },
-                            showOtpResetDialog = showOtpDialog,
-                            otpResetState = otpResetState,
-                            onOpenForgotPassword = { email -> viewModel.openForgotPasswordOtpFlow(email) },
-                            onDismissForgotPassword = { viewModel.dismissForgotPasswordOtpFlow() },
-                            onRequestOtp = { email -> viewModel.requestPasswordResetOtp(email) },
-                            onVerifyOtp = { otp -> viewModel.verifyPasswordResetOtp(otp) },
-                            onResendOtp = { viewModel.resendPasswordResetOtp() },
-                            onResetPassword = { newPass, confirmPass -> viewModel.resetPasswordWithNewCredentials(newPass, confirmPass) },
-                            onCompleteReset = { viewModel.finishPasswordResetToLogin() },
-                            showOtpSignupDialog = showSignupDialog,
-                            otpSignupState = otpSignupState,
-                            onDismissSignupOtp = { viewModel.dismissSignupOtpFlow() },
-                            onVerifySignupOtp = { otp -> viewModel.verifyAndCreateAccount(otp) },
-                            onResendSignupOtp = { viewModel.resendSignupOtp() }
+                            showForgotPasswordDialog = showForgotPasswordDialog,
+                            forgotPasswordState = forgotPasswordState,
+                            onOpenForgotPassword = { email -> viewModel.openForgotPasswordDialog(email) },
+                            onDismissForgotPassword = { viewModel.dismissForgotPasswordDialog() },
+                            onSendPasswordResetLink = { email -> viewModel.sendPasswordResetLink(email) },
+                            onConfirmPasswordReset = { actionCode, newPass, confirmPass ->
+                                viewModel.confirmPasswordResetWithCode(actionCode, newPass, confirmPass)
+                            }
                         )
                     }
                     AppScreenState.ONBOARDING -> {
@@ -161,6 +155,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.let { uri ->
+            viewModel.handleAuthActionUri(uri)
         }
     }
 }
