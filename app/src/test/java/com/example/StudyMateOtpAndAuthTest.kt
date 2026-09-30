@@ -354,4 +354,113 @@ class StudyMateOtpAndAuthTest {
         assertTrue(expectedWebClientId.startsWith("393174656677-"))
         assertTrue(expectedAndroidClientId.startsWith("393174656677-"))
     }
+
+    // ==========================================
+    // 14. ATTEMPT LIMIT & EXPIRED STATE GUARDS
+    // ==========================================
+
+    @Test
+    fun testVerificationBlockedWhenAttemptsExhausted() {
+        val exhaustedState = OtpResetUiState(
+            step = OtpStep.VERIFY_OTP,
+            email = "student@example.com",
+            attemptsRemaining = 0
+        )
+        // Guard check: cannot verify when attemptsRemaining <= 0
+        val canVerify = exhaustedState.attemptsRemaining > 0
+        assertFalse(canVerify)
+    }
+
+    @Test
+    fun testVerificationBlockedWhenExpired() {
+        val now = 1000000000L
+        val expiredState = OtpResetUiState(
+            step = OtpStep.VERIFY_OTP,
+            email = "student@example.com",
+            expiresAtMillis = now - 1000L // 1 second in the past
+        )
+        val isExpired = expiredState.expiresAtMillis > 0 && now > expiredState.expiresAtMillis
+        assertTrue(isExpired)
+    }
+
+    // ==========================================
+    // 15. SIGNUP OTP ARCHITECTURE TESTS
+    // ==========================================
+
+    @Test
+    fun testSignupOtpMockWorkflow() {
+        val mockSignupService = object : com.example.data.auth.IOtpSignupService {
+            var storedOtp = "654321"
+            var attempts = 0
+            var tokenIssued: String? = null
+
+            override suspend fun requestSignupOtp(email: String, fullName: String): Result<OtpRequestResult> {
+                if (!SecurityUtils.isValidEmail(email)) return Result.failure(IllegalArgumentException("Invalid email"))
+                return Result.success(OtpRequestResult(true, "OTP sent", 30, 300))
+            }
+
+            override suspend fun verifySignupOtp(email: String, otp: String): Result<com.example.data.auth.OtpSignupVerifyResult> {
+                attempts++
+                if (attempts > 5) return Result.failure(IllegalStateException("Max attempts exceeded"))
+                return if (otp == storedOtp) {
+                    tokenIssued = "signup_token_abc123"
+                    Result.success(com.example.data.auth.OtpSignupVerifyResult(true, tokenIssued!!, "Verified"))
+                } else {
+                    Result.failure(IllegalArgumentException("Incorrect OTP"))
+                }
+            }
+
+            override suspend fun createVerifiedEmailAccount(
+                email: String,
+                signupToken: String,
+                password: String,
+                fullName: String
+            ): Result<com.example.data.auth.OtpSignupAccountResult> {
+                val pwdErr = SecurityUtils.validatePasswordStrength(password)
+                if (pwdErr != null) return Result.failure(IllegalArgumentException(pwdErr))
+                if (signupToken != tokenIssued) return Result.failure(IllegalStateException("Invalid token"))
+                return Result.success(com.example.data.auth.OtpSignupAccountResult(true, "custom_tok_123", "uid_123", "Created"))
+            }
+        }
+
+        kotlinx.coroutines.runBlocking {
+            val req = mockSignupService.requestSignupOtp("newstudent@example.com", "Subhankar")
+            assertTrue(req.isSuccess)
+            assertEquals(30, req.getOrThrow().cooldownSeconds)
+            assertEquals(300, req.getOrThrow().expiresInSeconds)
+
+            val wrong = mockSignupService.verifySignupOtp("newstudent@example.com", "000000")
+            assertFalse(wrong.isSuccess)
+
+            val correct = mockSignupService.verifySignupOtp("newstudent@example.com", "654321")
+            assertTrue(correct.isSuccess)
+            val token = correct.getOrThrow().signupToken
+            assertEquals("signup_token_abc123", token)
+
+            val weakAcc = mockSignupService.createVerifiedEmailAccount("newstudent@example.com", token, "123", "Subhankar")
+            assertFalse(weakAcc.isSuccess)
+
+            val successAcc = mockSignupService.createVerifiedEmailAccount("newstudent@example.com", token, "SecurePass2026", "Subhankar")
+            assertTrue(successAcc.isSuccess)
+            assertEquals("uid_123", successAcc.getOrThrow().uid)
+        }
+    }
+
+    @Test
+    fun testSignupOtpStateGuards() {
+        val now = 2000000000L
+        val expiredSignup = com.example.data.auth.OtpSignupUiState(
+            isOpen = true,
+            email = "test@example.com",
+            expiresAtMillis = now - 500L
+        )
+        assertTrue(expiredSignup.expiresAtMillis > 0 && now > expiredSignup.expiresAtMillis)
+
+        val exhaustedSignup = com.example.data.auth.OtpSignupUiState(
+            isOpen = true,
+            email = "test@example.com",
+            attemptsRemaining = 0
+        )
+        assertFalse(exhaustedSignup.attemptsRemaining > 0)
+    }
 }

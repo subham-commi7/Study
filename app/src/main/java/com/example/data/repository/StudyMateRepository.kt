@@ -28,16 +28,20 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import com.example.data.auth.IOtpPasswordResetService
+import com.example.data.auth.IOtpSignupService
 import com.example.data.auth.OtpPasswordResetManager
 import com.example.data.auth.OtpRequestResult
 import com.example.data.auth.OtpResetResult
+import com.example.data.auth.OtpSignupAccountResult
+import com.example.data.auth.OtpSignupVerifyResult
 import com.example.data.auth.OtpVerifyResult
 import java.util.Locale
 
 class StudyMateRepository(
     private val db: AppDatabase,
     private val authManager: FirebaseAuthManager = FirebaseAuthManager(),
-    private val otpService: IOtpPasswordResetService = OtpPasswordResetManager()
+    private val otpService: IOtpPasswordResetService = OtpPasswordResetManager(),
+    private val otpSignupService: IOtpSignupService = OtpPasswordResetManager()
 ) {
 
     // Subjects
@@ -500,6 +504,57 @@ class StudyMateRepository(
 
     suspend fun resetPasswordWithToken(email: String, resetToken: String, newPassword: String): Result<OtpResetResult> {
         return otpService.resetPassword(email, resetToken, newPassword)
+    }
+
+    suspend fun requestSignupOtp(email: String, fullName: String): Result<OtpRequestResult> {
+        return otpSignupService.requestSignupOtp(email, fullName)
+    }
+
+    suspend fun verifySignupOtp(email: String, otp: String): Result<OtpSignupVerifyResult> {
+        return otpSignupService.verifySignupOtp(email, otp)
+    }
+
+    suspend fun createVerifiedEmailAccount(
+        email: String,
+        signupToken: String,
+        password: String,
+        fullName: String
+    ): Result<UserEntity> {
+        val trimmedEmail = email.trim().lowercase()
+        val trimmedName = fullName.trim()
+
+        val apiResult = otpSignupService.createVerifiedEmailAccount(trimmedEmail, signupToken, password, trimmedName)
+        if (apiResult.isFailure) {
+            return Result.failure(apiResult.exceptionOrNull() ?: Exception("Account creation failed."))
+        }
+        val accountRes = apiResult.getOrThrow()
+
+        // Authenticate locally in Firebase Auth using custom token if provided, or fallback to signInWithEmailAndPassword
+        if (!accountRes.customToken.isNullOrBlank()) {
+            val fbResult = authManager.signInWithCustomToken(accountRes.customToken)
+            if (fbResult.isFailure) {
+                authManager.signInWithEmailAndPassword(trimmedEmail, password)
+            }
+        } else {
+            authManager.signInWithEmailAndPassword(trimmedEmail, password)
+        }
+
+        var localUser = db.userDao().getUserByEmail(trimmedEmail)
+        if (localUser == null) {
+            val studentId = generateUniqueStudentId()
+            val newUser = UserEntity(
+                studentId = studentId,
+                fullName = trimmedName,
+                email = trimmedEmail,
+                passwordHash = "",
+                salt = ""
+            )
+            val id = db.userDao().insertUser(newUser)
+            localUser = newUser.copy(id = id)
+        }
+
+        setSession(localUser.id, isAuthenticated = true, setupDone = false)
+        return Result.success(localUser)
     }
 
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {

@@ -120,6 +120,8 @@ class MainActivity : ComponentActivity() {
                     AppScreenState.AUTH -> {
                         val otpResetState by viewModel.otpResetState.collectAsStateWithLifecycle()
                         val showOtpDialog by viewModel.showOtpResetDialog.collectAsStateWithLifecycle()
+                        val otpSignupState by viewModel.otpSignupState.collectAsStateWithLifecycle()
+                        val showSignupDialog by viewModel.showOtpSignupDialog.collectAsStateWithLifecycle()
 
                         AuthScreen(
                             onLogin = { email, pass -> viewModel.login(email, pass) },
@@ -137,7 +139,12 @@ class MainActivity : ComponentActivity() {
                             onVerifyOtp = { otp -> viewModel.verifyPasswordResetOtp(otp) },
                             onResendOtp = { viewModel.resendPasswordResetOtp() },
                             onResetPassword = { newPass, confirmPass -> viewModel.resetPasswordWithNewCredentials(newPass, confirmPass) },
-                            onCompleteReset = { viewModel.finishPasswordResetToLogin() }
+                            onCompleteReset = { viewModel.finishPasswordResetToLogin() },
+                            showOtpSignupDialog = showSignupDialog,
+                            otpSignupState = otpSignupState,
+                            onDismissSignupOtp = { viewModel.dismissSignupOtpFlow() },
+                            onVerifySignupOtp = { otp -> viewModel.verifyAndCreateAccount(otp) },
+                            onResendSignupOtp = { viewModel.resendSignupOtp() }
                         )
                     }
                     AppScreenState.ONBOARDING -> {

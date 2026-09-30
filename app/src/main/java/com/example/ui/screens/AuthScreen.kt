@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.auth.OtpResetUiState
+import com.example.data.auth.OtpSignupUiState
 import com.example.data.auth.OtpStep
 import com.example.data.auth.SecurityUtils
 import com.example.ui.components.studyMateTextFieldColors
@@ -97,7 +98,12 @@ fun AuthScreen(
     onVerifyOtp: (otp: String) -> Unit = {},
     onResendOtp: () -> Unit = {},
     onResetPassword: (newPass: String, confirmPass: String) -> Unit = { _, _ -> },
-    onCompleteReset: () -> String = { "" }
+    onCompleteReset: () -> String = { "" },
+    showOtpSignupDialog: Boolean = false,
+    otpSignupState: OtpSignupUiState = OtpSignupUiState(),
+    onDismissSignupOtp: () -> Unit = {},
+    onVerifySignupOtp: (otp: String) -> Unit = {},
+    onResendSignupOtp: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Login, 1 = Sign Up
 
@@ -674,6 +680,18 @@ fun AuthScreen(
             }
         )
     }
+
+    // ========================================================
+    // SECURE REAL EMAIL OTP SIGNUP VERIFICATION DIALOG
+    // ========================================================
+    if (showOtpSignupDialog) {
+        OtpSignupDialog(
+            state = otpSignupState,
+            onDismiss = onDismissSignupOtp,
+            onVerifyOtp = onVerifySignupOtp,
+            onResendOtp = onResendSignupOtp
+        )
+    }
 }
 
 /**
@@ -821,7 +839,10 @@ fun OtpPasswordResetDialog(
 
                     OutlinedTextField(
                         value = otpInput,
-                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) otpInput = it },
+                        onValueChange = { input ->
+                            val digitsOnly = input.filter { it.isDigit() }.take(6)
+                            otpInput = digitsOnly
+                        },
                         label = { Text("Verification Code") },
                         placeholder = { Text("123456") },
                         singleLine = true,
@@ -831,6 +852,11 @@ fun OtpPasswordResetDialog(
                             color = MaterialTheme.colorScheme.onSurface
                         ),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (otpInput.length == 6 && !state.isLoading && expiryRemainingSeconds > 0 && state.attemptsRemaining > 0) {
+                                onVerifyOtp(otpInput.trim())
+                            }
+                        }),
                         colors = studyMateTextFieldColors(),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
@@ -883,7 +909,10 @@ fun OtpPasswordResetDialog(
                             )
                         } else {
                             TextButton(
-                                onClick = onResendOtp,
+                                onClick = {
+                                    otpInput = ""
+                                    onResendOtp()
+                                },
                                 enabled = !state.isLoading,
                                 modifier = Modifier.testTag("otp_resend_button")
                             ) {
@@ -1064,9 +1093,10 @@ fun OtpPasswordResetDialog(
                     }
                 }
                 OtpStep.VERIFY_OTP -> {
+                    val canVerify = !state.isLoading && otpInput.length == 6 && (expiryRemainingSeconds > 0 || state.expiresAtMillis == 0L) && state.attemptsRemaining > 0
                     Button(
                         onClick = { onVerifyOtp(otpInput.trim()) },
-                        enabled = !state.isLoading && otpInput.length == 6,
+                        enabled = canVerify,
                         colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.testTag("otp_verify_button")
@@ -1138,4 +1168,249 @@ private fun PasswordRequirementItem(label: String, isMet: Boolean) {
             fontWeight = if (isMet) FontWeight.SemiBold else FontWeight.Normal
         )
     }
+}
+
+/**
+ * Material 3 Dialog implementing Create Account Email OTP verification:
+ * - 6-digit verification code entry
+ * - 5-minute countdown timer
+ * - 30-second resend cooldown
+ * - 5 attempts limit
+ * - Cancels/dismisses or verifies and activates the account
+ */
+@Composable
+fun OtpSignupDialog(
+    state: OtpSignupUiState,
+    onDismiss: () -> Unit,
+    onVerifyOtp: (otp: String) -> Unit,
+    onResendOtp: () -> Unit
+) {
+    var otpInput by remember { mutableStateOf("") }
+    var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentTimeMillis = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+
+    val expiryRemainingSeconds = remember(currentTimeMillis, state.expiresAtMillis) {
+        if (state.expiresAtMillis > currentTimeMillis) {
+            ((state.expiresAtMillis - currentTimeMillis) / 1000).toInt()
+        } else 0
+    }
+
+    val cooldownRemainingSeconds = remember(currentTimeMillis, state.cooldownUntilMillis) {
+        if (state.cooldownUntilMillis > currentTimeMillis) {
+            ((state.cooldownUntilMillis - currentTimeMillis) / 1000).toInt()
+        } else 0
+    }
+
+    val expiryMinutes = expiryRemainingSeconds / 60
+    val expirySeconds = expiryRemainingSeconds % 60
+    val formattedExpiry = String.format("%02d:%02d", expiryMinutes, expirySeconds)
+
+    AlertDialog(
+        onDismissRequest = {
+            if (!state.isLoading) onDismiss()
+        },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(AcademicBlue.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Email,
+                        contentDescription = null,
+                        tint = AcademicBlue,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Verify Your Email",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "We sent a 6-digit verification code to complete your StudyMate account registration.",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = state.email,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AcademicBlue
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = otpInput,
+                    onValueChange = { input ->
+                        val digitsOnly = input.filter { it.isDigit() }.take(6)
+                        otpInput = digitsOnly
+                    },
+                    label = { Text("Verification Code") },
+                    placeholder = { Text("123456") },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 4.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (otpInput.length == 6 && !state.isLoading && expiryRemainingSeconds > 0 && state.attemptsRemaining > 0) {
+                            onVerifyOtp(otpInput.trim())
+                        }
+                    }),
+                    colors = studyMateTextFieldColors(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("signup_otp_code_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Expiry Countdown
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (expiryRemainingSeconds > 0) {
+                            "Code expires in $formattedExpiry"
+                        } else {
+                            "Code expired. Please request a new code."
+                        },
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (expiryRemainingSeconds > 0) MaterialTheme.colorScheme.onSurfaceVariant else DangerRed
+                    )
+
+                    if (state.attemptsRemaining < 5) {
+                        Text(
+                            text = "${state.attemptsRemaining} attempts left",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = WarningOrange
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Resend Cooldown
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (cooldownRemainingSeconds > 0) {
+                        Text(
+                            text = "You can request another code in $cooldownRemainingSeconds seconds.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        TextButton(
+                            onClick = {
+                                otpInput = ""
+                                onResendOtp()
+                            },
+                            enabled = !state.isLoading,
+                            modifier = Modifier.testTag("signup_otp_resend_button")
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Resend OTP",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+
+                // Error Banner
+                if (!state.error.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        color = DangerRed.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = state.error,
+                            fontSize = 12.sp,
+                            color = DangerRed,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+
+                // Neutral / Success Info Banner
+                if (!state.successMessage.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Surface(
+                        color = SuccessGreen.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = state.successMessage,
+                            fontSize = 12.sp,
+                            color = SuccessGreen,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val canVerify = !state.isLoading && otpInput.length == 6 && (expiryRemainingSeconds > 0 || state.expiresAtMillis == 0L) && state.attemptsRemaining > 0
+            Button(
+                onClick = { onVerifyOtp(otpInput.trim()) },
+                enabled = canVerify,
+                colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.testTag("signup_otp_verify_button")
+            ) {
+                if (state.isLoading) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Verify & Create Account")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !state.isLoading,
+                modifier = Modifier.testTag("signup_otp_cancel_button")
+            ) {
+                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    )
 }

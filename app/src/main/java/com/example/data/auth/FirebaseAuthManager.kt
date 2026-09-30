@@ -111,6 +111,17 @@ class FirebaseAuthManager(
         }
     }
 
+    suspend fun signInWithCustomToken(customToken: String): Result<FirebaseUser> {
+        val activeAuth = auth ?: return Result.failure(IllegalStateException("Firebase is not initialized."))
+        return try {
+            val authResult = activeAuth.signInWithCustomToken(customToken).await()
+            val user = authResult.user ?: return Result.failure(IllegalStateException("Sign in failed with token."))
+            Result.success(user)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
         val trimmedEmail = email.trim()
         if (!SecurityUtils.isValidEmail(trimmedEmail)) {

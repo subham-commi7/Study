@@ -10,6 +10,7 @@ import com.example.data.ai.GeminiHelper
 import com.example.data.ai.UniversalDocumentEngine
 import com.example.data.local.AppDatabase
 import com.example.data.auth.OtpResetUiState
+import com.example.data.auth.OtpSignupUiState
 import com.example.data.auth.OtpStep
 import com.example.data.auth.SecurityUtils
 import com.example.data.local.entities.AcademicTaskEntity
@@ -105,6 +106,13 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _showOtpResetDialog = MutableStateFlow(false)
     val showOtpResetDialog: StateFlow<Boolean> = _showOtpResetDialog.asStateFlow()
+
+    // Real OTP Account Creation State
+    private val _otpSignupState = MutableStateFlow(OtpSignupUiState())
+    val otpSignupState: StateFlow<OtpSignupUiState> = _otpSignupState.asStateFlow()
+
+    private val _showOtpSignupDialog = MutableStateFlow(false)
+    val showOtpSignupDialog: StateFlow<Boolean> = _showOtpSignupDialog.asStateFlow()
 
     private val _reminderMinutes = MutableStateFlow(10)
     val reminderMinutes: StateFlow<Int> = _reminderMinutes.asStateFlow()
@@ -376,22 +384,157 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun register(name: String, email: String, pass: String, confirmPass: String) {
+        val trimmedName = name.trim()
+        val trimmedEmail = email.trim().lowercase()
+
+        if (trimmedName.isEmpty()) {
+            _authError.value = "Please enter your full name."
+            return
+        }
+        if (!SecurityUtils.isValidEmail(trimmedEmail)) {
+            _authError.value = "Please enter a valid email address."
+            return
+        }
+        if (pass != confirmPass) {
+            _authError.value = "Passwords do not match."
+            return
+        }
+        val pwdError = SecurityUtils.validatePasswordStrength(pass)
+        if (pwdError != null) {
+            _authError.value = pwdError
+            return
+        }
+
         viewModelScope.launch {
-            if (pass != confirmPass) {
-                _authError.value = "Passwords do not match."
-                return@launch
-            }
             _isAuthLoading.value = true
             _authError.value = null
-            val result = repository.registerUser(name, email, pass)
+            val result = repository.requestSignupOtp(trimmedEmail, trimmedName)
             _isAuthLoading.value = false
+
             if (result.isSuccess) {
-                val user = result.getOrThrow()
-                _currentUser.value = user
-                _appScreenState.value = AppScreenState.ONBOARDING
-                showMessage("Account created! Please set up your academic profile.")
+                val res = result.getOrThrow()
+                val now = System.currentTimeMillis()
+                _otpSignupState.value = OtpSignupUiState(
+                    isOpen = true,
+                    email = trimmedEmail,
+                    fullName = trimmedName,
+                    password = pass,
+                    expiresAtMillis = now + (res.expiresInSeconds * 1000L),
+                    cooldownUntilMillis = now + (res.cooldownSeconds * 1000L),
+                    attemptsRemaining = 5,
+                    isLoading = false,
+                    error = null,
+                    successMessage = res.message
+                )
+                _showOtpSignupDialog.value = true
             } else {
-                _authError.value = result.exceptionOrNull()?.message ?: "Registration failed"
+                _authError.value = result.exceptionOrNull()?.message ?: "Failed to send verification code."
+            }
+        }
+    }
+
+    fun dismissSignupOtpFlow() {
+        _showOtpSignupDialog.value = false
+        _otpSignupState.value = OtpSignupUiState()
+    }
+
+    fun resendSignupOtp() {
+        val current = _otpSignupState.value
+        val now = System.currentTimeMillis()
+        if (current.cooldownUntilMillis > 0 && now < current.cooldownUntilMillis) {
+            val remaining = Math.ceil((current.cooldownUntilMillis - now) / 1000.0).toInt()
+            _otpSignupState.value = current.copy(
+                error = "Please wait $remaining seconds before requesting another code."
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            _otpSignupState.value = current.copy(isLoading = true, error = null, successMessage = null)
+            val result = repository.requestSignupOtp(current.email, current.fullName)
+            if (result.isSuccess) {
+                val res = result.getOrThrow()
+                val updatedNow = System.currentTimeMillis()
+                _otpSignupState.value = current.copy(
+                    expiresAtMillis = updatedNow + (res.expiresInSeconds * 1000L),
+                    cooldownUntilMillis = updatedNow + (res.cooldownSeconds * 1000L),
+                    attemptsRemaining = 5,
+                    isLoading = false,
+                    error = null,
+                    successMessage = res.message
+                )
+            } else {
+                _otpSignupState.value = current.copy(
+                    isLoading = false,
+                    error = result.exceptionOrNull()?.message ?: "Failed to resend code."
+                )
+            }
+        }
+    }
+
+    fun verifyAndCreateAccount(otp: String) {
+        val cleanOtp = otp.trim()
+        if (!SecurityUtils.isValidOtp(cleanOtp)) {
+            _otpSignupState.value = _otpSignupState.value.copy(
+                error = "Verification code must be exactly 6 digits."
+            )
+            return
+        }
+
+        val current = _otpSignupState.value
+        val now = System.currentTimeMillis()
+        if (current.expiresAtMillis > 0 && now > current.expiresAtMillis) {
+            _otpSignupState.value = current.copy(
+                error = "Verification code has expired. Please request a new code."
+            )
+            return
+        }
+
+        if (current.attemptsRemaining <= 0) {
+            _otpSignupState.value = current.copy(
+                error = "Maximum verification attempts exceeded. Please request a new code."
+            )
+            return
+        }
+
+        viewModelScope.launch {
+            _otpSignupState.value = current.copy(isLoading = true, error = null, successMessage = null)
+            val verifyResult = repository.verifySignupOtp(current.email, cleanOtp)
+            if (verifyResult.isFailure) {
+                val rem = (current.attemptsRemaining - 1).coerceAtLeast(0)
+                val errMsg = if (rem <= 0) {
+                    "Maximum verification attempts exceeded. Please request a new code."
+                } else {
+                    verifyResult.exceptionOrNull()?.message ?: "Incorrect verification code. $rem attempts remaining."
+                }
+                _otpSignupState.value = current.copy(
+                    attemptsRemaining = rem,
+                    isLoading = false,
+                    error = errMsg
+                )
+                return@launch
+            }
+
+            val signupToken = verifyResult.getOrThrow().signupToken
+            val createResult = repository.createVerifiedEmailAccount(
+                email = current.email,
+                signupToken = signupToken,
+                password = current.password,
+                fullName = current.fullName
+            )
+
+            if (createResult.isSuccess) {
+                val user = createResult.getOrThrow()
+                _currentUser.value = user
+                _showOtpSignupDialog.value = false
+                _otpSignupState.value = OtpSignupUiState()
+                _appScreenState.value = AppScreenState.ONBOARDING
+                showMessage("Account created and verified! Welcome, ${user.fullName}!")
+            } else {
+                _otpSignupState.value = current.copy(
+                    isLoading = false,
+                    error = createResult.exceptionOrNull()?.message ?: "Failed to create verified account."
+                )
             }
         }
     }
@@ -483,6 +626,14 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         if (current.expiresAtMillis > 0 && now > current.expiresAtMillis) {
             _otpResetState.value = _otpResetState.value.copy(
                 error = "Verification code has expired. Please request a new code.",
+                successMessage = null
+            )
+            return
+        }
+
+        if (current.attemptsRemaining <= 0) {
+            _otpResetState.value = _otpResetState.value.copy(
+                error = "Maximum verification attempts exceeded. Please request a new code.",
                 successMessage = null
             )
             return
