@@ -8,6 +8,7 @@ import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.auth.ActionCodeResult
@@ -296,6 +297,12 @@ class FirebaseAuthManager(
 
         return try {
             val credentialManager = CredentialManager.create(context)
+
+            // Primary option: Standard Sign in with Google (shows account chooser with all device accounts & add account)
+            val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId)
+                .build()
+
+            // Secondary option: Google ID option with filterByAuthorizedAccounts = false
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setServerClientId(serverClientId)
@@ -303,28 +310,46 @@ class FirebaseAuthManager(
                 .build()
 
             val request = GetCredentialRequest.Builder()
+                .addCredentialOption(signInWithGoogleOption)
                 .addCredentialOption(googleIdOption)
                 .build()
 
             val result = credentialManager.getCredential(context = context, request = request)
             val credential = result.credential
 
-            if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
-                val idToken = googleIdTokenCredential.idToken
-                val authCredential = GoogleAuthProvider.getCredential(idToken, null)
-                val authResult = activeAuth.signInWithCredential(authCredential).await()
-                val user = authResult.user ?: return Result.failure(IllegalStateException("Firebase authentication with Google failed."))
-                Result.success(user)
-            } else {
-                Result.failure(IllegalStateException("Unexpected credential format received from Google."))
+            val idToken: String? = when {
+                credential is CustomCredential && (
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL ||
+                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_SIWG_CREDENTIAL
+                ) -> {
+                    val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                    googleIdTokenCredential.idToken
+                }
+                credential is CustomCredential -> {
+                    try {
+                        val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+                        googleIdTokenCredential.idToken
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                else -> null
             }
+
+            if (idToken.isNullOrBlank()) {
+                return Result.failure(IllegalStateException("Failed to obtain authentication token from Google."))
+            }
+
+            val authCredential = GoogleAuthProvider.getCredential(idToken, null)
+            val authResult = activeAuth.signInWithCredential(authCredential).await()
+            val user = authResult.user ?: return Result.failure(IllegalStateException("Firebase authentication with Google failed."))
+            Result.success(user)
         } catch (e: GetCredentialCancellationException) {
             Result.failure(CancellationException("Google sign-in was cancelled."))
         } catch (e: NoCredentialException) {
-            Result.failure(IllegalStateException("No Google account found on device."))
+            Result.failure(IllegalStateException("No Google account is available on this device. Please add a Google account and try again."))
         } catch (e: GetCredentialException) {
-            Result.failure(Exception(e.localizedMessage ?: "Google sign-in failed. Please verify SHA-1 in Firebase Console."))
+            Result.failure(Exception(e.localizedMessage ?: "Google sign-in failed. Please verify SHA-1 and SHA-256 fingerprints in Firebase Console."))
         } catch (e: FirebaseNetworkException) {
             Result.failure(IllegalStateException("Network connection error during Google sign-in."))
         } catch (e: Exception) {
