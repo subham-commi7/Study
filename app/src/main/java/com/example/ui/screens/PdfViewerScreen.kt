@@ -109,29 +109,59 @@ fun PdfViewerScreen(
         errorMessage = null
         withContext(Dispatchers.IO) {
             try {
-                var file = File(document.filePath)
-                if (!file.exists()) {
-                    // Fallback 1: check filesDir/academic_docs/ with document.fileName
-                    val fallback1 = File(File(context.filesDir, "academic_docs"), document.fileName)
-                    if (fallback1.exists()) {
-                        file = fallback1
-                    } else {
-                        // Fallback 2: look for any file ending with document.fileName in academic_docs
-                        val docsDir = File(context.filesDir, "academic_docs")
-                        val matching = docsDir.listFiles { _, name -> name.endsWith(document.fileName) }?.firstOrNull()
-                        if (matching != null && matching.exists()) {
-                            file = matching
+                var pfd: ParcelFileDescriptor? = null
+
+                // Strategy 1: Check direct filePath as File
+                val directFile = File(document.filePath)
+                if (directFile.exists() && directFile.length() > 0L) {
+                    pfd = ParcelFileDescriptor.open(directFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                }
+
+                // Strategy 2: If filePath is content:// URI
+                if (pfd == null && document.filePath.startsWith("content://")) {
+                    try {
+                        pfd = context.contentResolver.openFileDescriptor(android.net.Uri.parse(document.filePath), "r")
+                    } catch (_: Exception) {}
+                }
+
+                // Strategy 3: Check academic_docs fallback directory
+                if (pfd == null) {
+                    val docsDir = File(context.filesDir, "academic_docs")
+                    val fallbackFile = File(docsDir, document.fileName)
+                    if (fallbackFile.exists() && fallbackFile.length() > 0L) {
+                        pfd = ParcelFileDescriptor.open(fallbackFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                    } else if (docsDir.exists()) {
+                        val matching = docsDir.listFiles { _, name ->
+                            name.endsWith(document.fileName, ignoreCase = true) ||
+                            (document.fileName.isNotBlank() && name.contains(document.fileName.substringBeforeLast("."), ignoreCase = true))
+                        }?.firstOrNull { it.length() > 0L }
+                        if (matching != null) {
+                            pfd = ParcelFileDescriptor.open(matching, ParcelFileDescriptor.MODE_READ_ONLY)
                         }
                     }
                 }
 
-                if (!file.exists() || file.length() == 0L) {
-                    errorMessage = "This PDF document is not available on device storage. Please re-upload the file."
+                // Strategy 4: If remote HTTP/HTTPS or gs:// URL, download to cache
+                if (pfd == null && (document.filePath.startsWith("http://") || document.filePath.startsWith("https://"))) {
+                    try {
+                        val docsDir = File(context.filesDir, "academic_docs").apply { mkdirs() }
+                        val cachedFile = File(docsDir, "download_${System.currentTimeMillis()}_${document.fileName.ifBlank { "doc.pdf" }}")
+                        val url = java.net.URL(document.filePath)
+                        url.openStream().use { input ->
+                            cachedFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        if (cachedFile.exists() && cachedFile.length() > 0L) {
+                            pfd = ParcelFileDescriptor.open(cachedFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (pfd == null) {
+                    errorMessage = "This PDF document is not available on local device storage. Please re-upload or import the file again."
                     isLoading = false
                     return@withContext
                 }
 
-                val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                 val renderer = PdfRenderer(pfd)
                 pfdRef = pfd
                 pdfRendererRef = renderer
@@ -147,7 +177,7 @@ fun PdfViewerScreen(
                     renderPage(renderer, i, pageBitmaps)
                 }
             } catch (e: Exception) {
-                errorMessage = "Unable to open PDF: ${e.message}"
+                errorMessage = "Unable to open PDF: ${e.localizedMessage ?: "Invalid or corrupt file."}"
                 isLoading = false
             }
         }
@@ -260,7 +290,19 @@ fun PdfViewerScreen(
                     ) {
                         Icon(Icons.Default.Description, contentDescription = null, tint = Color.White, modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(errorMessage!!, color = Color.White, fontSize = 13.sp)
+                        Text(
+                            text = errorMessage!!,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        androidx.compose.material3.Button(
+                            onClick = onBack,
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = AcademicBlue)
+                        ) {
+                            Text("Go Back")
+                        }
                     }
                 }
 

@@ -145,8 +145,8 @@ fun ProfileScreen(
         aiActions = aiActions,
         allDocuments = documents,
         onUpdateReminderTiming = { viewModel.updateReminderTiming(it) },
-        onUpdateProfile = { college, course, semester, year, group ->
-            viewModel.saveAcademicProfile(college, course, semester, year, group)
+        onUpdateProfile = { college, course, semester, year, group, fullName ->
+            viewModel.saveAcademicProfile(college, course, semester, year, group, fullName = fullName)
         },
         onLogout = { viewModel.logout() },
         onSearchStudent = { query, callback -> viewModel.searchStudent(query, callback) },
@@ -174,7 +174,7 @@ fun ProfileScreen(
     aiActions: List<AIActionEntity> = emptyList(),
     allDocuments: List<DocumentEntity> = emptyList(),
     onUpdateReminderTiming: (minutes: Int) -> Unit,
-    onUpdateProfile: (college: String, course: String, semester: String, year: String, group: String) -> Unit,
+    onUpdateProfile: (college: String, course: String, semester: String, year: String, group: String, fullName: String) -> Unit,
     onLogout: () -> Unit,
     onSearchStudent: (query: String, (List<UserEntity>) -> Unit) -> Unit = { _, _ -> },
     onSendFriendRequest: (String) -> Unit = {},
@@ -197,6 +197,7 @@ fun ProfileScreen(
     var viewingDocument by remember { mutableStateOf<DocumentEntity?>(null) }
 
     // Edit Profile form fields
+    var editFullName by remember(user) { mutableStateOf(user?.fullName ?: "") }
     var editCollege by remember(user) { mutableStateOf(user?.college ?: "") }
     var editCourse by remember(user) { mutableStateOf(user?.course ?: "") }
     var editSemester by remember(user) { mutableStateOf(user?.semester ?: "") }
@@ -268,7 +269,7 @@ fun ProfileScreen(
                                     contentScale = ContentScale.Crop
                                 )
                             } else {
-                                val initials = SecurityUtils.computeInitials(user?.fullName)
+                                val initials = SecurityUtils.computeInitials(user?.fullName, user?.email)
                                 Text(
                                     text = initials,
                                     color = Color.White,
@@ -704,6 +705,14 @@ fun ProfileScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
+                        value = editFullName,
+                        onValueChange = { editFullName = it },
+                        label = { Text("Full Name (First & Last)") },
+                        singleLine = true,
+                        colors = studyMateTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
                         value = editCollege,
                         onValueChange = { editCollege = it },
                         label = { Text("College / University") },
@@ -751,7 +760,7 @@ fun ProfileScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        onUpdateProfile(editCollege, editCourse, editSemester, editYear, editGroup)
+                        onUpdateProfile(editCollege, editCourse, editSemester, editYear, editGroup, editFullName)
                         showEditProfileDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = AcademicBlue)

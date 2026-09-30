@@ -158,7 +158,7 @@ fun HomeScreen(
                             contentScale = ContentScale.Crop
                         )
                     } else {
-                        val initials = SecurityUtils.computeInitials(currentUser?.fullName)
+                        val initials = SecurityUtils.computeInitials(currentUser?.fullName, currentUser?.email)
                         Text(
                             text = initials,
                             color = Color.White,

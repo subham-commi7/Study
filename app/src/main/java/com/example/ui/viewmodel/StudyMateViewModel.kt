@@ -753,9 +753,9 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         return email
     }
 
-    fun saveAcademicProfile(college: String, course: String, semester: String, year: String, group: String) {
+    fun saveAcademicProfile(college: String, course: String, semester: String, year: String, group: String, fullName: String? = null) {
         viewModelScope.launch {
-            val result = repository.updateUserProfile(college, course, semester, year, group)
+            val result = repository.updateUserProfile(college, course, semester, year, group, fullName = fullName)
             if (result.isSuccess) {
                 _currentUser.value = result.getOrThrow()
                 _appScreenState.value = AppScreenState.MAIN
@@ -764,6 +764,12 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 showMessage("Failed to save profile: ${result.exceptionOrNull()?.message}", isError = true)
             }
         }
+    }
+
+    fun saveGoogleWebClientId(clientId: String) {
+        val context = getApplication<Application>()
+        repository.saveGoogleWebClientId(context, clientId)
+        showMessage("Google Web Client ID saved!")
     }
 
     fun skipOnboarding() {
@@ -1280,15 +1286,32 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val context = getApplication<Application>()
                 val docsDir = File(context.filesDir, "academic_docs").apply { mkdirs() }
-                val destFile = File(docsDir, "${System.currentTimeMillis()}_${result.fileName}")
+
+                // Check if already persistently saved by UniversalDocumentEngine
+                val persistentPath = result.persistentFilePath
+                val finalFile = if (!persistentPath.isNullOrBlank() && File(persistentPath).exists() && File(persistentPath).length() > 0L) {
+                    File(persistentPath)
+                } else {
+                    val safeName = result.fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "doc_${System.currentTimeMillis()}.pdf" }
+                    val copyFile = File(docsDir, "${System.currentTimeMillis()}_$safeName")
+                    if (result.sourceUriString != null) {
+                        try {
+                            val uri = Uri.parse(result.sourceUriString)
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                copyFile.outputStream().use { output -> input.copyTo(output) }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    copyFile
+                }
 
                 val doc = DocumentEntity(
                     title = result.title,
                     type = confirmedType.name,
-                    filePath = destFile.absolutePath,
+                    filePath = finalFile.absolutePath,
                     fileName = result.fileName,
                     mimeType = result.mimeType,
-                    fileSize = result.fileSize,
+                    fileSize = if (finalFile.exists()) finalFile.length() else result.fileSize,
                     contentSummary = result.notesData?.summary ?: result.noticeData?.simpleExplanation ?: "Processed ${confirmedType.displayName}"
                 )
                 repository.insertDocument(doc)
@@ -1331,14 +1354,20 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             SyllabusTopicEntity(
                                 subjectId = subjId,
                                 subjectName = topic.subject,
+                                subjectCode = topic.subjectCode,
+                                course = topic.course,
+                                semester = topic.semester,
                                 unitName = topic.unit,
                                 chapterName = topic.chapter,
                                 topicName = topic.topic,
+                                subtopic = topic.subtopic,
+                                isTrackable = topic.isTrackable,
+                                isReferenceOnly = topic.isReferenceOnly,
                                 status = "NOT_STARTED"
                             )
                         }
                         repository.insertTopics(entities)
-                        showMessage("Saved syllabus (${topics.size} topics added)")
+                        showMessage("Saved syllabus (${topics.size} topics across subjects added)")
                     }
 
                     DocumentType.NOTICE, DocumentType.HOLIDAY_NOTICE, DocumentType.ACADEMIC_CALENDAR -> {
