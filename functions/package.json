@@ -5,7 +5,8 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "test": "node test/forgotPasswordBackend.test.js",
+    "test": "firebase emulators:exec --only firestore \"node test/firestoreRules.test.js\"",
+    "test:rules": "firebase emulators:exec --only firestore \"node test/firestoreRules.test.js\"",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
     "start": "npm run shell",

@@ -1,9 +1,273 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // SECURITY MANDATE: Password reset and Signup OTP records are strictly accessible by
-    // Cloud Functions / Firebase Admin SDK only. Normal authenticated and unauthenticated
-    // clients are completely blocked from reading or writing OTP hashes.
+
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
+    // Verify user is authenticated with Firebase Auth
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Verify user is the owner matching the path userId or provided uid
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Verify 8-digit numeric student ID format
+    function isValidStudentId(id) {
+      return id is string && id.matches('^[0-9]{8}$');
+    }
+
+    // Verify non-empty text string
+    function isNonEmptyString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // =========================================================================
+    // 1. USER PROFILES (PRIVATE)
+    // /users/{userId}
+    // Only the authenticated user can access their private profile (contains email,
+    // reminder settings, etc.). Other users cannot read this document.
+    // =========================================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+                    && request.resource.data.studentId is string
+                    && isValidStudentId(request.resource.data.studentId)
+                    && isNonEmptyString(request.resource.data.fullName, 1, 100)
+                    && (request.resource.data.email == request.auth.token.email || !('email' in request.resource.data));
+
+      allow update: if isOwner(userId)
+                    // UID, email, and assigned studentId cannot be modified once set
+                    && (!('studentId' in resource.data) || request.resource.data.studentId == resource.data.studentId)
+                    && (!('email' in resource.data) || request.resource.data.email == resource.data.email)
+                    && isNonEmptyString(request.resource.data.fullName, 1, 100);
+
+      allow delete: if isOwner(userId);
+
+      // -----------------------------------------------------------------------
+      // USER PRIVATE SUBCOLLECTIONS:
+      // Strictly isolated to the owning student (request.auth.uid == userId).
+      // No classmate or stranger can read or manipulate these records.
+      // -----------------------------------------------------------------------
+
+      // Academic Subjects tracked by user
+      match /subjects/{subjectId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Class Schedules / Routine items
+      match /class_schedules/{scheduleId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Attendance records (PRESENT, ABSENT, CANCELLED)
+      match /attendance_records/{recordId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Holiday exceptions & timetable adjustments
+      match /holiday_exceptions/{holidayId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Private documents & uploaded academic PDFs
+      match /documents/{docId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Academic tasks, assignments, and exam deadlines
+      match /academic_tasks/{taskId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // AI chat history & contextual actions
+      match /ai_actions/{actionId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // App & notification settings
+      match /app_settings/{settingKey} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // =========================================================================
+    // 2. PUBLIC PROFILES & USERNAME / STUDENT ID SEARCH
+    // /public_profiles/{studentId}
+    // Public directory for classmate search and verifying student IDs for friend requests.
+    // Contains ONLY safe public fields (studentId, fullName, college, course, photoUrl, userId).
+    // Does NOT contain private emails or notification preferences.
+    // =========================================================================
+    match /public_profiles/{studentId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+                    && isValidStudentId(studentId)
+                    && request.resource.data.studentId == studentId
+                    && request.resource.data.userId == request.auth.uid
+                    && isNonEmptyString(request.resource.data.fullName, 1, 100);
+
+      allow update: if isAuthenticated()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.studentId == resource.data.studentId
+                    && isNonEmptyString(request.resource.data.fullName, 1, 100);
+
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 3. FRIENDSHIPS & FRIEND REQUESTS
+    // /friendships/{friendshipId}
+    // Manages social connections between students.
+    // Only the sender (userUid) or recipient (friendUid) can access their friendship.
+    // =========================================================================
+    match /friendships/{friendshipId} {
+      // Both the initiating student and the recipient can read their mutual relationship
+      allow read: if isAuthenticated()
+                  && (request.auth.uid == resource.data.userUid || request.auth.uid == resource.data.friendUid);
+
+      // Sender creates a pending friend request
+      allow create: if isAuthenticated()
+                    && request.resource.data.userUid == request.auth.uid
+                    && request.resource.data.userUid != request.resource.data.friendUid
+                    && request.resource.data.status in ['PENDING', 'ACCEPTED']
+                    && isValidStudentId(request.resource.data.userStudentId)
+                    && isValidStudentId(request.resource.data.friendStudentId);
+
+      // Both parties can update the status (accept, decline, block), but cannot forge identities
+      allow update: if isAuthenticated()
+                    && (request.auth.uid == resource.data.userUid || request.auth.uid == resource.data.friendUid)
+                    && request.resource.data.userUid == resource.data.userUid
+                    && request.resource.data.friendUid == resource.data.friendUid
+                    && request.resource.data.userStudentId == resource.data.userStudentId
+                    && request.resource.data.friendStudentId == resource.data.friendStudentId
+                    && request.resource.data.status in ['PENDING', 'ACCEPTED', 'DECLINED', 'BLOCKED'];
+
+      // Either friend can remove/unfriend
+      allow delete: if isAuthenticated()
+                    && (request.auth.uid == resource.data.userUid || request.auth.uid == resource.data.friendUid);
+    }
+
+    // =========================================================================
+    // 4. FRIEND CHAT MESSAGES
+    // /friend_chats/{conversationKey} and /messages/{messageId}
+    // Direct student-to-student messaging between connected friends.
+    // =========================================================================
+    match /friend_chats/{conversationKey} {
+      allow read: if isAuthenticated()
+                  && request.auth.uid in resource.data.participantUids;
+
+      allow create: if isAuthenticated()
+                    && request.auth.uid in request.resource.data.participantUids
+                    && request.resource.data.participantUids.size() == 2;
+
+      allow update: if isAuthenticated()
+                    && request.auth.uid in resource.data.participantUids
+                    && request.resource.data.participantUids == resource.data.participantUids;
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated()
+                    && (request.auth.uid == resource.data.senderUid || request.auth.uid == resource.data.receiverUid);
+
+        allow create: if isAuthenticated()
+                      && request.resource.data.senderUid == request.auth.uid
+                      && request.resource.data.senderUid != request.resource.data.receiverUid
+                      && isNonEmptyString(request.resource.data.messageText, 1, 4000);
+
+        // Recipient can mark message as read (isRead = true)
+        allow update: if isAuthenticated()
+                      && request.auth.uid == resource.data.receiverUid
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+
+        allow delete: if isAuthenticated() && request.auth.uid == resource.data.senderUid;
+      }
+    }
+
+    // =========================================================================
+    // 5. SHARED DOCUMENTS
+    // /shared_documents/{sharedDocId}
+    // Academic documents and lecture notes shared between students.
+    // Only sender and recipient can read or delete.
+    // =========================================================================
+    match /shared_documents/{sharedDocId} {
+      allow read: if isAuthenticated()
+                  && (request.auth.uid == resource.data.senderUid || request.auth.uid == resource.data.recipientUid);
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.senderUid == request.auth.uid
+                    && request.resource.data.senderUid != request.resource.data.recipientUid
+                    && isNonEmptyString(request.resource.data.documentTitle, 1, 200);
+
+      allow update: if isAuthenticated()
+                    && (request.auth.uid == resource.data.senderUid || request.auth.uid == resource.data.recipientUid)
+                    && request.resource.data.senderUid == resource.data.senderUid
+                    && request.resource.data.recipientUid == resource.data.recipientUid;
+
+      allow delete: if isAuthenticated()
+                    && (request.auth.uid == resource.data.senderUid || request.auth.uid == resource.data.recipientUid);
+    }
+
+    // =========================================================================
+    // 6. SYLLABUS CATALOG (SHARED / COMMUNITY READABLE)
+    // /syllabuses/{syllabusId} and /topics/{topicId}
+    // Course curricula viewable by all enrolled students.
+    // Authors or admins can create and update content.
+    // =========================================================================
+    match /syllabuses/{syllabusId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.authorUid == request.auth.uid
+                    && isNonEmptyString(request.resource.data.subjectName, 1, 150);
+
+      allow update: if isAuthenticated()
+                    && (resource.data.authorUid == request.auth.uid || request.auth.token.admin == true)
+                    && request.resource.data.authorUid == resource.data.authorUid;
+
+      allow delete: if isAuthenticated()
+                    && (resource.data.authorUid == request.auth.uid || request.auth.token.admin == true);
+
+      match /topics/{topicId} {
+        allow read: if isAuthenticated();
+
+        allow create, update, delete: if isAuthenticated()
+                                      && (get(/databases/$(database)/documents/syllabuses/$(syllabusId)).data.authorUid == request.auth.uid
+                                          || request.auth.token.admin == true);
+      }
+    }
+
+    // =========================================================================
+    // 7. INSTITUTIONAL NOTICES
+    // /notices/{noticeId}
+    // College or class notices readable by all authenticated students.
+    // Authors or admins can manage notices.
+    // =========================================================================
+    match /notices/{noticeId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.authorUid == request.auth.uid
+                    && isNonEmptyString(request.resource.data.title, 1, 200);
+
+      allow update: if isAuthenticated()
+                    && (resource.data.authorUid == request.auth.uid || request.auth.token.admin == true)
+                    && request.resource.data.authorUid == resource.data.authorUid;
+
+      allow delete: if isAuthenticated()
+                    && (resource.data.authorUid == request.auth.uid || request.auth.token.admin == true);
+    }
+
+    // =========================================================================
+    // 8. SECURITY MANDATE: OTP RECORDS (ADMIN ONLY)
+    // /password_reset_otps and /signup_otps
+    // Completely blocked from all client SDKs (read & write: if false;).
+    // =========================================================================
     match /password_reset_otps/{document} {
       allow read, write: if false;
     }
@@ -12,7 +276,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Default catch-all rule
+    // =========================================================================
+    // 9. DEFAULT DENY CATCH-ALL
+    // Any document or path not explicitly permitted above is strictly denied.
+    // =========================================================================
     match /{document=**} {
       allow read, write: if false;
     }
