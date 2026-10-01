@@ -686,6 +686,7 @@ fun ProfileScreen(
                     .height(48.dp)
                     .testTag("logout_button")
             ) {
+                @Suppress("DEPRECATION")
                 Icon(imageVector = Icons.Default.ExitToApp, contentDescription = null, tint = DangerRed, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = "Log Out of StudyMate", color = DangerRed, fontWeight = FontWeight.Bold)
@@ -971,6 +972,7 @@ fun FriendsManagementDialog(
                                                     shape = RoundedCornerShape(8.dp),
                                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                                 ) {
+                                                    @Suppress("DEPRECATION")
                                                     Icon(imageVector = Icons.Default.Chat, contentDescription = null, modifier = Modifier.size(14.dp))
                                                     Spacer(modifier = Modifier.width(4.dp))
                                                     Text("Chat", fontSize = 12.sp)

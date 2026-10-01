@@ -387,6 +387,7 @@ fun CourseSyllabusReviewDialog(
                                                                     onClick = { showMoveMenu = true },
                                                                     modifier = Modifier.size(28.dp)
                                                                 ) {
+                                                                    @Suppress("DEPRECATION")
                                                                     Icon(Icons.Default.DriveFileMove, contentDescription = "Move topic", modifier = Modifier.size(15.dp), tint = AcademicAmber)
                                                                 }
                                                                 DropdownMenu(

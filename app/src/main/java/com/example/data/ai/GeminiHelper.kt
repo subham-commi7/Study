@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 object GeminiHelper {
-    private const val MODEL_NAME = "gemini-3.5-flash"
+    private const val MODEL_NAME = "gemini-2.5-flash"
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
     private val httpClient: OkHttpClient by lazy {
@@ -456,24 +456,39 @@ object GeminiHelper {
         }
     }
 
-    // Offline rule-based Assistant generator
+    // Offline rule-based Assistant generator that extracts only the section requested
     private fun generateOfflineAssistantAnswer(question: String, context: String): String {
         val q = question.lowercase()
+
+        fun extractSection(header: String, nextHeader: String?): String {
+            val startIdx = context.indexOf(header)
+            if (startIdx == -1) return "No records found under $header."
+            val contentStart = startIdx + header.length
+            val endIdx = if (nextHeader != null) context.indexOf(nextHeader, contentStart) else -1
+            val section = if (endIdx != -1) context.substring(contentStart, endIdx) else context.substring(contentStart)
+            return section.trim()
+        }
+
         return when {
-            q.contains("routine") || q.contains("class") || q.contains("আজ") || q.contains("কাল") || q.contains("আজকে") || q.contains("today") || q.contains("tomorrow") -> {
-                "Here are your classes from your saved StudyMate records:\n$context"
+            q.contains("routine") || q.contains("class") || q.contains("আজ") || q.contains("কাল") || q.contains("আজকে") || q.contains("today") || q.contains("tomorrow") || q.contains("schedule") -> {
+                val routineData = extractSection("ROUTINE / SCHEDULES:", "ATTENDANCE SUMMARY:")
+                "Classes & Routine from your saved records:\n\n$routineData"
             }
-            q.contains("attendance") || q.contains("হাজিরা") || q.contains("percentage") || q.contains("miss") -> {
-                "Here is your current attendance summary:\n$context"
+            q.contains("attendance") || q.contains("হাজিরা") || q.contains("percentage") || q.contains("miss") || q.contains("bunk") -> {
+                val attData = extractSection("ATTENDANCE SUMMARY:", "SYLLABUS STATUS:")
+                "Attendance summary from your saved records:\n\n$attData"
             }
-            q.contains("syllabus") || q.contains("chapter") || q.contains("বাকি") || q.contains("pending") -> {
-                "Here are your syllabus records:\n$context"
+            q.contains("syllabus") || q.contains("chapter") || q.contains("বাকি") || q.contains("pending") || q.contains("topic") -> {
+                val syllabusData = extractSection("SYLLABUS STATUS:", "NOTICES & DEADLINES:")
+                "Syllabus status from your saved records:\n\n$syllabusData"
             }
-            q.contains("notice") || q.contains("exam") || q.contains("নোটিশ") || q.contains("deadline") -> {
-                "Here are your notices & deadlines:\n$context"
+            q.contains("notice") || q.contains("exam") || q.contains("নোটিশ") || q.contains("deadline") || q.contains("holiday") -> {
+                val noticeData = extractSection("NOTICES & DEADLINES:", null)
+                "Notices & Deadlines from your saved records:\n\n$noticeData"
             }
             else -> {
-                "Offline Mode: I am referencing your local StudyMate records:\n\n$context\n\n(Tip: Connect internet with a Gemini API key for advanced natural language conversations!)"
+                "I could not find information regarding '$question' in your stored records.\n" +
+                "You can ask me about your routine, attendance percentage, syllabus progress, or notices."
             }
         }
     }

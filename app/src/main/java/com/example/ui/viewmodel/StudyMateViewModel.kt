@@ -78,6 +78,7 @@ data class UiNotification(
     val isError: Boolean = false
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class StudyMateViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: StudyMateRepository by lazy {
