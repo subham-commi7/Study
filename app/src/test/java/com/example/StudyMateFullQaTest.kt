@@ -166,4 +166,43 @@ class StudyMateFullQaTest {
         assertEquals(1, matchingTopics.size)
         assertEquals(1L, matchingTopics.first().id)
     }
+
+    @Test
+    fun testAttendanceStatusTransitionsAndEditing() {
+        val subject = SubjectEntity(id = 1, name = "Computer Networks", targetAttendance = 75)
+        
+        // Initial state: CANCELLED
+        val record1 = AttendanceRecordEntity(id = 1, subjectId = 1, dateMillis = 1000L, status = "CANCELLED")
+        val summary1 = SubjectAttendanceSummary.compute(subject, listOf(record1))
+        assertEquals(0, summary1.conductedClasses)
+        assertEquals(1, summary1.cancelledClasses)
+        assertEquals(0.0, summary1.percentage, 0.01)
+
+        // Edit CANCELLED -> PRESENT
+        val record2 = record1.copy(status = "PRESENT")
+        val summary2 = SubjectAttendanceSummary.compute(subject, listOf(record2))
+        assertEquals(1, summary2.conductedClasses)
+        assertEquals(1, summary2.attendedClasses)
+        assertEquals(100.0, summary2.percentage, 0.01)
+
+        // Edit PRESENT -> ABSENT
+        val record3 = record2.copy(status = "ABSENT")
+        val summary3 = SubjectAttendanceSummary.compute(subject, listOf(record3))
+        assertEquals(1, summary3.conductedClasses)
+        assertEquals(0, summary3.attendedClasses)
+        assertEquals(1, summary3.absentClasses)
+        assertEquals(0.0, summary3.percentage, 0.01)
+
+        // Edit ABSENT -> PRESENT
+        val record4 = record3.copy(status = "PRESENT")
+        val summary4 = SubjectAttendanceSummary.compute(subject, listOf(record4))
+        assertEquals(100.0, summary4.percentage, 0.01)
+
+        // Reset to NOT MARKED (list of active records is empty)
+        val summary5 = SubjectAttendanceSummary.compute(subject, emptyList())
+        assertEquals(0, summary5.conductedClasses)
+        assertEquals(0, summary5.attendedClasses)
+        assertEquals(0, summary5.absentClasses)
+        assertEquals(0.0, summary5.percentage, 0.01)
+    }
 }

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.LocationOn
@@ -447,6 +448,9 @@ fun AttendanceScreen(
                             },
                             onMarkCancelled = {
                                 viewModel.markAttendance(schedule.subjectId, "CANCELLED", currentTabInfo.dateMillis)
+                            },
+                            onClearStatus = {
+                                viewModel.markAttendance(schedule.subjectId, "NOT MARKED", currentTabInfo.dateMillis)
                             }
                         )
                     }
@@ -606,6 +610,7 @@ fun DayClassAttendanceCard(
     onMarkPresent: () -> Unit,
     onMarkAbsent: () -> Unit,
     onMarkCancelled: () -> Unit,
+    onClearStatus: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val formattedTime = remember(schedule.startTime, schedule.endTime) {
@@ -785,6 +790,9 @@ fun DayClassAttendanceCard(
                                 IconButton(onClick = onMarkCancelled, modifier = Modifier.size(28.dp)) {
                                     Icon(Icons.Default.EventBusy, contentDescription = "Change to Cancelled", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                                 }
+                            }
+                            IconButton(onClick = onClearStatus, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Delete, contentDescription = "Reset to Not Marked", tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
                             }
                         }
                     }

@@ -134,15 +134,20 @@ class StudyMateRepository(
             set(Calendar.MILLISECOND, 0)
         }
 
+        // Support Yesterday, Today, and Tomorrow (-1, 0, 1)
         val diffDays = ((calToday.timeInMillis - calTarget.timeInMillis) / (24 * 60 * 60 * 1000L)).toInt()
-        if (diffDays != 0 && diffDays != 1) {
-            throw IllegalStateException("Attendance submission is restricted to today or yesterday.")
+        if (diffDays !in -1..1) {
+            throw IllegalStateException("Attendance submission is restricted to yesterday, today, or tomorrow.")
         }
 
         val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(targetDateMillis))
         val existing = db.attendanceDao().getRecordForSubjectAndDate(subjectId, dateStr)
-        if (existing != null && existing.isLocked) {
-            throw IllegalStateException("Attendance for this class on $dateStr is already locked and cannot be modified.")
+
+        if (status.equals("NOT MARKED", ignoreCase = true) || status.isBlank()) {
+            if (existing != null) {
+                db.attendanceDao().deleteRecord(existing)
+            }
+            return 0L
         }
 
         return db.attendanceDao().insertRecord(
@@ -151,9 +156,9 @@ class StudyMateRepository(
                 subjectId = subjectId,
                 dateMillis = targetDateMillis,
                 dateString = dateStr,
-                status = status,
+                status = status.uppercase(),
                 notes = notes,
-                isLocked = true
+                isLocked = false
             )
         )
     }

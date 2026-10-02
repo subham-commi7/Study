@@ -461,17 +461,34 @@ object GeminiHelper {
         val q = question.lowercase()
 
         fun extractSection(header: String, nextHeader: String?): String {
-            val startIdx = context.indexOf(header)
+            val lowerContext = context.lowercase()
+            val lowerHeader = header.lowercase()
+            var startIdx = lowerContext.indexOf(lowerHeader)
+            var headerLen = header.length
+
+            if (startIdx == -1) {
+                // Secondary keyword fallback
+                val keyword = when {
+                    lowerHeader.contains("routine") -> "routine"
+                    lowerHeader.contains("attendance") -> "attendance"
+                    lowerHeader.contains("syllabus") -> "syllabus"
+                    lowerHeader.contains("notice") -> "notice"
+                    else -> lowerHeader
+                }
+                startIdx = lowerContext.indexOf(keyword)
+                headerLen = keyword.length
+            }
+
             if (startIdx == -1) return "No records found under $header."
-            val contentStart = startIdx + header.length
-            val endIdx = if (nextHeader != null) context.indexOf(nextHeader, contentStart) else -1
+            val contentStart = startIdx + headerLen
+            val endIdx = if (nextHeader != null) lowerContext.indexOf(nextHeader.lowercase(), contentStart) else -1
             val section = if (endIdx != -1) context.substring(contentStart, endIdx) else context.substring(contentStart)
             return section.trim()
         }
 
         return when {
             q.contains("routine") || q.contains("class") || q.contains("আজ") || q.contains("কাল") || q.contains("আজকে") || q.contains("today") || q.contains("tomorrow") || q.contains("schedule") -> {
-                val routineData = extractSection("ROUTINE / SCHEDULES:", "ATTENDANCE SUMMARY:")
+                val routineData = extractSection("ROUTINE (Classes):", "ATTENDANCE SUMMARY:")
                 "Classes & Routine from your saved records:\n\n$routineData"
             }
             q.contains("attendance") || q.contains("হাজিরা") || q.contains("percentage") || q.contains("miss") || q.contains("bunk") -> {
