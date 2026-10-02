@@ -288,9 +288,11 @@ class FirebaseAuthManager(
                 IllegalStateException(
                     "Google Sign-In Web Client ID is not configured.\n" +
                     "To enable Google Sign-In, add your OAuth Web Client ID in strings.xml (default_web_client_id) or google-services.json.\n" +
-                    "Firebase Console Fingerprints to register for project studymate-c9f21:\n" +
-                    "SHA-1: DC:46:28:96:09:2A:F0:F0:E9:0E:60:8D:16:76:AB:18:D8:BB:B7:04\n" +
-                    "SHA-256: FF:BD:54:B4:2B:F5:9D:26:A2:54:1B:7A:9F:59:89:8D:9C:06:2B:A9:53:6D:7B:AF:19:B7:25:F8:77:57:C5:18"
+                    "Firebase Console Fingerprints for project studymate-c9f21:\n" +
+                    "Debug SHA-1: 20:6F:A8:FE:02:1B:70:63:52:A2:07:C4:CF:71:50:D0:A1:A9:15:2F\n" +
+                    "Debug SHA-256: 2F:C0:26:E0:1F:73:0B:1F:94:F8:62:AE:FC:8B:E7:0E:FA:8F:AD:DB:CF:C3:31:98:63:B4:92:E7:D4:79:AA:94\n" +
+                    "Release SHA-1: 8A:6D:A4:D3:66:D9:A3:EF:19:11:10:75:29:37:01:E7:CE:DE:78:49\n" +
+                    "Release SHA-256: 8C:C5:35:1C:E7:DE:9C:33:C7:FD:97:05:92:26:17:4F:94:06:0E:DD:22:36:6C:A9:B5:3F:D9:CC:03:3A:63:90"
                 )
             )
         }
@@ -298,24 +300,29 @@ class FirebaseAuthManager(
         return try {
             val credentialManager = CredentialManager.create(context)
 
-            // Primary option: Standard Sign in with Google (shows account chooser with all device accounts & add account)
-            val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId)
-                .build()
-
-            // Secondary option: Google ID option with filterByAuthorizedAccounts = false
+            // Primary option: Google ID option showing all accounts on device + add account
             val googleIdOption = GetGoogleIdOption.Builder()
                 .setFilterByAuthorizedAccounts(false)
                 .setServerClientId(serverClientId)
                 .setAutoSelectEnabled(false)
                 .build()
 
-            val request = GetCredentialRequest.Builder()
-                .addCredentialOption(signInWithGoogleOption)
-                .addCredentialOption(googleIdOption)
-                .build()
-
-            val result = credentialManager.getCredential(context = context, request = request)
-            val credential = result.credential
+            val credential = try {
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(googleIdOption)
+                    .build()
+                val result = credentialManager.getCredential(context = context, request = request)
+                result.credential
+            } catch (unsupported: Exception) {
+                if (unsupported is GetCredentialCancellationException) throw unsupported
+                // Fallback option: GetSignInWithGoogleOption
+                val signInWithGoogleOption = GetSignInWithGoogleOption.Builder(serverClientId).build()
+                val fallbackRequest = GetCredentialRequest.Builder()
+                    .addCredentialOption(signInWithGoogleOption)
+                    .build()
+                val fallbackResult = credentialManager.getCredential(context = context, request = fallbackRequest)
+                fallbackResult.credential
+            }
 
             val idToken: String? = when {
                 credential is CustomCredential && (
